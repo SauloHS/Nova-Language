@@ -245,7 +245,7 @@ static std::string inputDialog(const std::string& prompt,
 
     // Hint
     wattron(dlgWin, COLOR_PAIR(COL_COMMENT));
-    mvwaddstr(dlgWin, dh - 1, 2, " Enter: confirm   Esc: cancel ");
+    mvwaddstr(dlgWin, dh - 2, 2, " Enter: confirm   Esc: cancel ");
     wattroff(dlgWin, COLOR_PAIR(COL_COMMENT));
 
     // Cursor
@@ -302,6 +302,7 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
   std::string filename = editFile;
 
   initscr();
+  set_escdelay(10);
   raw();
   keypad(stdscr, TRUE);
   noecho();
@@ -648,12 +649,26 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
   redraw();
 
   auto runEcheck = [&]() {
-    // Salva em arquivo temporário sem marcar dirty
     statusMsg = "checking...";
+    redraw();
+
+#ifdef _WIN32
+    std::string tmpDir =
+        std::string(getenv("TEMP") ? getenv("TEMP") : "C:\\Temp");
+    std::string tmpFile =
+        tmpDir + "\\nova_echeck_" + std::to_string(getpid()) + ".npp";
+    std::string tmpOut =
+        tmpDir + "\\nova_echeck_out_" + std::to_string(getpid()) + ".txt";
+    std::string cmd =
+        "n++.exe --echeck \"" + tmpFile + "\" > \"" + tmpOut + "\" 2>nul";
+#else
     std::string tmpFile =
         "/tmp/nova_echeck_" + std::to_string(getpid()) + ".npp";
     std::string tmpOut =
         "/tmp/nova_echeck_out_" + std::to_string(getpid()) + ".txt";
+    std::string cmd =
+        "n++ --echeck " + tmpFile + " > " + tmpOut + " 2>/dev/null";
+#endif
     {
       std::ofstream f(tmpFile);
       for (size_t i = 0; i < lines.size(); i++) {

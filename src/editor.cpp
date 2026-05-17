@@ -652,23 +652,26 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
     statusMsg = "checking...";
     redraw();
 
+    // No MinGW/Windows, usa TEMP do sistema
+    const char* tmpEnv = getenv("TEMP");
+    if (!tmpEnv) tmpEnv = getenv("TMP");
+    if (!tmpEnv) tmpEnv = "C:\\Temp";
+    std::string tmpDir = tmpEnv;
+
+    std::string pid = std::to_string(getpid());
+    std::string tmpFile = tmpDir + "\\nova_echeck_" + pid + ".npp";
+    std::string tmpOut = tmpDir + "\\nova_echeck_out_" + pid + ".txt";
+
 #ifdef _WIN32
-    std::string tmpDir =
-        std::string(getenv("TEMP") ? getenv("TEMP") : "C:\\Temp");
-    std::string tmpFile =
-        tmpDir + "\\nova_echeck_" + std::to_string(getpid()) + ".npp";
-    std::string tmpOut =
-        tmpDir + "\\nova_echeck_out_" + std::to_string(getpid()) + ".txt";
     std::string cmd =
         "n++.exe --echeck \"" + tmpFile + "\" > \"" + tmpOut + "\" 2>nul";
 #else
-    std::string tmpFile =
-        "/tmp/nova_echeck_" + std::to_string(getpid()) + ".npp";
-    std::string tmpOut =
-        "/tmp/nova_echeck_out_" + std::to_string(getpid()) + ".txt";
+    std::string tmpFile = "/tmp/nova_echeck_" + pid + ".npp";
+    std::string tmpOut = "/tmp/nova_echeck_out_" + pid + ".txt";
     std::string cmd =
         "n++ --echeck " + tmpFile + " > " + tmpOut + " 2>/dev/null";
 #endif
+
     {
       std::ofstream f(tmpFile);
       for (size_t i = 0; i < lines.size(); i++) {
@@ -676,13 +679,11 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
         if (i + 1 < lines.size()) f << "\n";
       }
     }
-    system(
-        ("n++ --echeck " + tmpFile + " > " + tmpOut + " 2>/dev/null").c_str());
+    system(cmd.c_str());
     echeckErrors.clear();
     std::ifstream f(tmpOut);
     std::string ln;
     while (std::getline(f, ln)) {
-      // formato: line:col:error:msg
       size_t p1 = ln.find(':');
       size_t p2 = ln.find(':', p1 + 1);
       size_t p3 = ln.find(':', p2 + 1);

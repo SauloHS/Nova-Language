@@ -1,0 +1,5 @@
+void main(){
+    float pi = 3.14;
+    float raio = 2.0;
+    print(pi * raio);
+}

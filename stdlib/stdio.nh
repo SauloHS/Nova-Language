@@ -1,0 +1,10 @@
+namespace std;
+
+fn scanf(fmt: char, ...) -> int;
+fn printf(fmt: string, ...);
+fn print(n: i32);
+fn print(n: f64);
+fn print(n: f32);
+fn print(s: string);
+fn print(c: char);
+fn print(n: i64);

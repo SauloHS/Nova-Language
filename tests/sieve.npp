@@ -1,0 +1,32 @@
+#include <stdio.nh>
+
+int limit = 10000000;
+char isPrime[5000001]; 
+
+int main() {
+    // Cálculo (Malandragem de pular pares)
+    for(int i = 0; (2 * i + 3) * (2 * i + 3) <= limit; i++) {
+        if(isPrime[i] == 0) then {
+            int p = 2 * i + 3; 
+            int j = (p * p - 3) / 2;
+            while(j <= (limit - 3) / 2) {
+                isPrime[j] = 1;
+                j += p;
+            }
+        }
+    }
+
+    // A CORREÇÃO ESTÁ AQUI:
+    int count = 1; // 1 porque o número 2 é primo e não está no array
+    int max_idx = (limit - 3) / 2;
+
+    for(int n = 0; n <= max_idx; n++) {
+        if(isPrime[n] == 0) then {
+            count++;
+        }
+    }
+
+    // Se a Nova usar o printf do C, use %ld para long
+    std::printf("Primos encontrados: %ld\n", count); 
+    return 0;
+}

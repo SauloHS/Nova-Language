@@ -1,0 +1,14 @@
+int main() {
+    for(int i = 1; i <= 100; i++) {
+        if(i % 15 == 0) then {
+            print("FizzBuzz");
+        } else if(i % 3 == 0) then {
+            print("Fizz");
+        } else if(i % 5 == 0) then {
+            print("Buzz");
+        } else {
+            print(i);
+        }
+    }
+    return 0;
+}

@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova — Documentation</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg:         #060608;
+    --surface:    #0d0d10;
+    --surface2:   #13131a;
+    --text:       #e8e8f0;
+    --muted:      #4a4a5a;
+    --dim:        #18181f;
+    --accent:     #7b6cff;
+    --accent2:    #a89bff;
+    --accent-dim: rgba(123,108,255,0.12);
+    --border:     rgba(255,255,255,0.06);
+    --border2:    rgba(123,108,255,0.18);
+    --mono:       'IBM Plex Mono', monospace;
+    --sans:       'DM Sans', sans-serif;
+    --gutter:     clamp(24px, 5vw, 64px);
+    --sidebar-w:  240px;
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    opacity: 0.03;
+    pointer-events: none;
+    z-index: 9999;
+}
+
+/* ── NAV ── */
+nav {
+    position: fixed;
+    top: 0; width: 100%;
+    height: 64px;
+    padding: 0 var(--gutter);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(6,6,8,0.9);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--border);
+    z-index: 200;
+}
+
+.logo {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.logo-arrow { color: var(--accent); }
+
+.nav-links { display: flex; gap: 4px; }
+.nav-links a {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 7px 14px;
+    border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+}
+.nav-links a:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.nav-links a.active { color: var(--accent2); }
+
+/* ── LAYOUT ── */
+.docs-layout {
+    display: flex;
+    padding-top: 64px;
+    min-height: 100vh;
+}
+
+/* ── SIDEBAR ── */
+.sidebar {
+    position: fixed;
+    top: 64px;
+    left: 0;
+    width: var(--sidebar-w);
+    height: calc(100vh - 64px);
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    padding: 32px 0;
+    background: var(--bg);
+}
+.sidebar::-webkit-scrollbar { width: 3px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 2px; }
+
+.sidebar-section {
+    margin-bottom: 24px;
+    padding: 0 20px;
+}
+
+.sidebar-section-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+    padding-left: 12px;
+}
+
+.sidebar-link {
+    display: block;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border-left: 2px solid transparent;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+    line-height: 1.4;
+}
+.sidebar-link:hover {
+    color: var(--text);
+    background: rgba(255,255,255,0.03);
+}
+.sidebar-link.active {
+    color: var(--accent2);
+    border-left-color: var(--accent);
+    background: var(--accent-dim);
+}
+
+/* ── MAIN CONTENT ── */
+.docs-content {
+    margin-left: var(--sidebar-w);
+    flex: 1;
+    padding: 56px var(--gutter) 120px calc(var(--gutter) + 16px);
+    max-width: calc(var(--sidebar-w) + 820px);
+}
+
+/* ── SECTION ── */
+.docs-section {
+    margin-bottom: 72px;
+    scroll-margin-top: 88px;
+}
+
+.section-eyebrow {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.section-eyebrow::before {
+    content: '';
+    display: block;
+    width: 20px;
+    height: 1px;
+    background: var(--accent);
+}
+
+.docs-section h2 {
+    font-size: clamp(22px, 3vw, 32px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin-bottom: 20px;
+    line-height: 1.15;
+}
+
+.docs-section h3 {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-top: 36px;
+    margin-bottom: 12px;
+    color: var(--text);
+    padding-top: 36px;
+    border-top: 1px solid var(--border);
+}
+.docs-section h3:first-of-type { border-top: none; padding-top: 0; }
+
+.docs-section p {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.85;
+    margin-bottom: 16px;
+    max-width: 680px;
+}
+
+.docs-section p strong { color: var(--text); font-weight: 600; }
+
+/* inline code */
+.docs-section p code,
+.docs-section li code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface2);
+    color: var(--accent2);
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+}
+
+/* code block */
+.code-block {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 20px 0;
+    transition: border-color 0.2s;
+}
+.code-block:hover { border-color: var(--border2); }
+
+.code-block-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.015);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.dot.r { background: #ff5f57; }
+.dot.y { background: #febc2e; }
+.dot.g { background: #28c840; }
+.code-filename {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+}
+
+.code-block-body {
+    padding: 20px 22px;
+    background: var(--surface);
+    overflow-x: auto;
+}
+.code-block-body pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.85;
+    color: var(--text);
+}
+
+/* table */
+.docs-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+}
+.docs-table th {
+    text-align: left;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.docs-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    vertical-align: top;
+}
+.docs-table td:first-child { color: var(--accent2); }
+.docs-table tr:last-child td { border-bottom: none; }
+.docs-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* note box */
+.note {
+    background: var(--accent-dim);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent2);
+    line-height: 1.7;
+}
+.note::before { content: '▸ '; color: var(--accent); }
+
+.warn {
+    background: rgba(249,115,22,0.07);
+    border: 1px solid rgba(249,115,22,0.2);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #fbd38d;
+    line-height: 1.7;
+}
+.warn::before { content: '! '; color: #f97316; }
+
+/* ul/li */
+.docs-section ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0;
+}
+.docs-section ul li {
+    font-size: 14px;
+    color: var(--muted);
+    padding-left: 18px;
+    position: relative;
+    line-height: 1.7;
+}
+.docs-section ul li::before {
+    content: '▸';
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-size: 11px;
+    top: 3px;
+}
+
+/* syntax highlight */
+.kw   { color: #a78bfa; }
+.fn   { color: #7dd3fc; }
+.str  { color: #86efac; }
+.num  { color: #fda4af; }
+.cmt  { color: #2d2d3a; font-style: italic; }
+.op   { color: #4a4a5a; }
+.typ  { color: #f9a8d4; }
+
+/* ── FOOTER ── */
+footer {
+    margin-left: var(--sidebar-w);
+    padding: 40px var(--gutter);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 12px;
+}
+.footer-brand { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--muted); }
+.footer-brand span { color: var(--accent); }
+.footer-links { display: flex; gap: 24px; }
+.footer-links a { font-family: var(--mono); font-size: 11px; color: var(--muted); text-decoration: none; transition: color 0.2s; }
+.footer-links a:hover { color: var(--text); }
+
+@media (max-width: 768px) {
+    .sidebar { display: none; }
+    .docs-content { margin-left: 0; padding: 40px 24px 80px; }
+    footer { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+    <a href="index.html" class="logo"><span class="logo-arrow">▸</span> nova</a>
+    <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="docs.html" class="active">Docs</a>
+        <a href="download.html">Download</a>
+    </div>
+</nav>
+
+<div class="docs-layout">
+
+<aside class="sidebar">
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Getting Started</div>
+        <a href="#getting-started" class="sidebar-link active">Introduction</a>
+        <a href="#data-types" class="sidebar-link">Data Types</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Language</div>
+        <a href="#variables" class="sidebar-link">Variables</a>
+        <a href="#operators" class="sidebar-link">Operators</a>
+        <a href="#control-flow" class="sidebar-link">Control Flow</a>
+        <a href="#loops" class="sidebar-link">Loops</a>
+        <a href="#functions" class="sidebar-link">Functions</a>
+        <a href="#arrays" class="sidebar-link">Arrays</a>
+        <a href="#structs" class="sidebar-link">Structs</a>
+        <a href="#casts" class="sidebar-link">Casts</a>
+        <a href="#type-safety" class="sidebar-link">Type Safety</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Stdlib</div>
+        <a href="#stdlib" class="sidebar-link">Standard Library</a>
+        <a href="#stdio" class="sidebar-link">stdio — printf, print &amp; scanf</a>
+        <a href="#math" class="sidebar-link">math — sqrt</a>
+        <a href="#namespaces" class="sidebar-link">Namespaces</a>
+        <a href="#overloading" class="sidebar-link">Overloading</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Headers</div>
+        <a href="#headers" class="sidebar-link">Header Files (.nh)</a>
+        <a href="#best-practices" class="sidebar-link">Best Practices</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Built-ins</div>
+        <a href="#comments" class="sidebar-link">Comments</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Tooling</div>
+        <a href="#compiler" class="sidebar-link">Compiler CLI</a>
+        <a href="#editor" class="sidebar-link">Editor (-w)</a>
+        <a href="#examples" class="sidebar-link">Examples</a>
+    </div>
+</aside>
+
+<main class="docs-content">
+
+    <div class="docs-section" id="getting-started">
+        <div class="section-eyebrow">Introduction</div>
+        <h2>Getting Started with Nova</h2>
+        <p>Nova is a compiled, statically typed language that uses LLVM as its backend, linking with clang to produce native executables. The syntax is familiar — if you've written in Rust, you'll feel at home immediately.</p>
+        <p>Download the compiler from source using the <a href="download.html" style="color:var(--accent2);text-decoration:none;border-bottom:1px solid var(--border2);">downloads page</a>. See the <a href="installation.html" style="color:var(--accent2);text-decoration:none;border-bottom:1px solid var(--border2);">installation guide</a>.</p>
+
+        <h3>Hello, World</h3>
+        <p>Create a file named <code>hello.npp</code>:</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">hello.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"Hello, World!\n"</span>)<span class="op">;</span>
+}</pre></div>
+        </div>
+        <p>Compile and run:</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">terminal</div></div>
+            <div class="code-block-body"><pre>$ n++ hello.npp
+$ hello
+Hello, World!</pre></div>
+        </div>
+
+        <h3>Program Structure</h3>
+        <p>A Nova program is a flat list of top-level declarations — global variables, global arrays, and function definitions. Execution starts at <code>main</code>.</p>
+        <div class="note">Functions must be declared before they are called. Declare helper functions above their callers.</div>
+    </div>
+
+    <div class="docs-section" id="data-types">
+        <div class="section-eyebrow">Types</div>
+        <h2>Data Types</h2>
+        <p>Nova has seven primitive types. All types are checked at compile time — there are no implicit conversions.</p>
+        <table class="docs-table">
+            <thead><tr><th>Type</th><th>Description</th><th>Example</th></tr></thead>
+            <tbody>
+                <tr><td>i32</td><td>32-bit signed integer</td><td>42, -7, 0</td></tr>
+                <tr><td>i64</td><td>64-bit signed integer</td><td>9876543210</td></tr>
+                <tr><td>f32</td><td>32-bit floating point</td><td>3.14, -0.5</td></tr>
+                <tr><td>f64</td><td>64-bit floating point</td><td>3.14159265358979</td></tr>
+                <tr><td>char</td><td>8-bit character — literals use single quotes</td><td>'A', '\n', '\t'</td></tr>
+                <tr><td>string</td><td>UTF-8 string literal — escape sequences processed</td><td>"hello\n"</td></tr>
+                <tr><td>bool</td><td>Boolean value</td><td>true, false</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="docs-section" id="variables">
+        <div class="section-eyebrow">Variables</div>
+        <h2>Variables</h2>
+        <p>Variables require an explicit type at declaration. They need to be initialized. Declare them with <code>let [mut] NAME: TYPE = VALUE</code>.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">let</span> x<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">0</span><span class="op">;</span>
+<span class="kw">let</span> <span class="kw">mut</span> y<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">10</span><span class="op">;</span>
+<span class="kw">let</span> pi<span class="op">:</span> <span class="typ">f32</span> <span class="op">=</span> <span class="num">3.14</span><span class="op">;</span>
+<span class="kw">let</span> <span class="kw">mut</span> name<span class="op">:</span> <span class="typ">string</span> <span class="op">=</span> <span class="str">"Nova"</span><span class="op">;</span></pre></div>
+        </div>
+
+        <h3>Assignment</h3>
+        <p>Basic and compound assignment operators are all supported (only if the variable is declared as <code>mut</code>):</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre>x <span class="op">=</span> <span class="num">42</span><span class="op">;</span>
+x <span class="op">+=</span> <span class="num">5</span><span class="op">;</span>   <span class="cmt">// x = x + 5</span>
+x <span class="op">-=</span> <span class="num">3</span><span class="op">;</span>   <span class="cmt">// x = x - 3</span>
+x <span class="op">*=</span> <span class="num">2</span><span class="op">;</span>   <span class="cmt">// x = x * 2</span>
+x <span class="op">/=</span> <span class="num">4</span><span class="op">;</span>   <span class="cmt">// x = x / 4</span>
+x<span class="op">++;</span>      <span class="cmt">// x = x + 1</span>
+x<span class="op">--;</span>      <span class="cmt">// x = x - 1</span></pre></div>
+        </div>
+
+        <h3>Scope</h3>
+        <p>Variables declared outside functions are <strong>global</strong> and accessible anywhere. Variables declared inside a function or block are <strong>local</strong> and destroyed when the block ends.</p>
+    </div>
+
+    <div class="docs-section" id="operators">
+        <div class="section-eyebrow">Operators</div>
+        <h2>Operators</h2>
+        <h3>Arithmetic & Comparison</h3>
+        <table class="docs-table">
+            <thead><tr><th>Operator</th><th>Meaning</th></tr></thead>
+            <tbody>
+                <tr><td>+  -  * /</td><td>Arithmetic: add, subtract, multiply, divide</td></tr>
+                <tr><td>%</td><td>Modulo (integer remainder) — integers only</td></tr>
+                <tr><td>==  !=</td><td>Equal, not equal</td></tr>
+                <tr><td>&lt;  &gt;  &lt;=  &gt;=</td><td>Comparison</td></tr>
+                <tr><td>&amp;&amp;  ||</td><td>Logical AND / OR (short-circuit)</td></tr>
+                <tr><td>!</td><td>Logical NOT</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Precedence</h3>
+        <p>From highest to lowest: <code>!</code> → <code>* / %</code> → <code>+ -</code> → comparisons → <code>&amp;&amp;</code> → <code>||</code>. Use parentheses to override.</p>
+        <div class="note"><code>&amp;&amp;</code> and <code>||</code> use short-circuit evaluation — the right side is not evaluated if the result is already determined by the left side.</div>
+    </div>
+
+    <div class="docs-section" id="control-flow">
+        <div class="section-eyebrow">Control Flow</div>
+        <h2>Control Flow</h2>
+        <p>If statements have optional parentheses around the condition.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">if</span>(x <span class="op">&gt;</span> <span class="num">0</span>) {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"positive\n"</span>)<span class="op">;</span>
+} <span class="kw">else if</span> x <span class="op">==</span> <span class="num">0</span> {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"zero\n"</span>)<span class="op">;</span>
+} <span class="kw">else</span> {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"negative\n"</span>)<span class="op">;</span>
+}</pre></div>
+        </div>
+        <p>You can chain as many <code>else if</code> branches as needed. The final <code>else</code> is optional.</p>
+    </div>
+
+    <div class="docs-section" id="loops">
+        <div class="section-eyebrow">Loops</div>
+        <h2>Loops</h2>
+
+        <h3>while</h3>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">let</span> <span class="kw">mut</span> i<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">0</span><span class="op">;</span>
+<span class="kw">while</span>(i <span class="op">&lt;</span> <span class="num">10</span>) {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, i)<span class="op">;</span>
+    i<span class="op">++;</span>
+}</pre></div>
+        </div>
+
+        <h3>for</h3>
+        <p>Classic three-part syntax: initializer, condition, step. The loop variable can be declared inside the <code>for</code> or already exist.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">for</span>(<span class="kw">let</span> <span class="kw">mut</span> i<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">0</span><span class="op">;</span> i <span class="op">&lt;</span> <span class="num">10</span><span class="op">;</span> i<span class="op">++</span>) {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, i)<span class="op">;</span>
+}
+
+<span class="cmt">// step can be any assignment</span>
+<span class="kw">for</span>(<span class="kw">let</span> <span class="kw">mut</span> i<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">0</span><span class="op">;</span> i <span class="op">&lt;</span> <span class="num">100</span><span class="op">;</span> i <span class="op">+=</span> <span class="num">5</span>) {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, i)<span class="op">;</span>
+}</pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="functions">
+        <div class="section-eyebrow">Functions</div>
+        <h2>Functions</h2>
+        <p>Functions are declared with <code>fn NAME(ARG1: TYPE, ARG2: TYPE) -&gt; RETURN_TYPE { BODY }</code>. They support full recursion.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">add</span>(a<span class="op">:</span> <span class="typ">i32</span>, b<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span> {
+    <span class="kw">return</span> a <span class="op">+</span> b<span class="op">;</span>
+}
+
+<span class="kw">fn</span> <span class="fn">factorial</span>(n<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span> {
+    <span class="kw">if</span>(n <span class="op">&lt;=</span> <span class="num">1</span>) { <span class="kw">return</span> <span class="num">1</span><span class="op">;</span> }
+    <span class="kw">return</span> n <span class="op">*</span> <span class="fn">factorial</span>(n <span class="op">-</span> <span class="num">1</span>)<span class="op">;</span>
+}</pre></div>
+        </div>
+
+        <h3>void Functions</h3>
+        <p>Functions that produce side effects but return no value omit the return type entirely.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">greet</span>(name<span class="op">:</span> <span class="typ">string</span>) {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"Hello, %s\n"</span>, name)<span class="op">;</span>
+}
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="fn">greet</span>(<span class="str">"world"</span>)<span class="op">;</span>
+}</pre></div>
+        </div>
+
+        <h3>Calling Functions</h3>
+        <p>Functions can be called as expressions (capturing the return value) or as statements (discarding it):</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">let</span> result<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="fn">add</span>(<span class="num">3</span>, <span class="num">4</span>)<span class="op">;</span>   <span class="cmt">// capture return</span>
+<span class="fn">add</span>(<span class="num">10</span>, <span class="num">20</span>)<span class="op">;</span>                <span class="cmt">// discard return</span>
+<span class="fn">greet</span>(<span class="str">"Nova"</span>)<span class="op">;</span>             <span class="cmt">// void call</span></pre></div>
+        </div>
+
+        <h3>Struct Support in Functions</h3>
+        <p>Functions can accept structs as arguments and return structs. The compiler automatically manages the stack memory layout for copying these structures.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">struct</span> <span class="typ">MyStruct</span> {
+    x<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+    y<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+}
+
+<span class="kw">fn</span> <span class="fn">calculate_point</span>(a<span class="op">:</span> <span class="typ">MyStruct</span>, b<span class="op">:</span> <span class="typ">MyStruct</span>) <span class="op">-&gt;</span> <span class="typ">MyStruct</span> {
+    <span class="kw">let</span> <span class="kw">mut</span> c<span class="op">:</span> <span class="typ">MyStruct</span> <span class="op">=</span> {
+        x<span class="op">:</span> a<span class="op">.</span>x <span class="op">+</span> b<span class="op">.</span>x<span class="op">,</span>
+        y<span class="op">:</span> a<span class="op">.</span>y <span class="op">+</span> b<span class="op">.</span>y
+    }<span class="op">;</span>
+    <span class="kw">return</span> c<span class="op">;</span>
+}</pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="arrays">
+        <div class="section-eyebrow">Arrays</div>
+        <h2>Arrays</h2>
+        <p>Arrays have a fixed size specified as an integer literal at declaration time. They can be stack-allocated (local) or global.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">let</span> <span class="kw">mut</span> nums<span class="op">:</span> <span class="typ">i32</span>[<span class="num">10</span>] <span class="op">=</span> {}<span class="op">;</span>                          <span class="cmt">// zeroed</span>
+<span class="kw">let</span> <span class="kw">mut</span> primes<span class="op">:</span> <span class="typ">i32</span>[<span class="num">5</span>] <span class="op">=</span> {<span class="num">2</span>, <span class="num">3</span>, <span class="num">5</span>, <span class="num">7</span>, <span class="num">11</span>}<span class="op">;</span>   <span class="cmt">// initialized</span>
+<span class="kw">let</span> <span class="kw">mut</span> coords<span class="op">:</span> <span class="typ">f32</span>[<span class="num">3</span>] <span class="op">=</span> {<span class="num">1.0</span>, <span class="num">2.5</span>, <span class="num">3.0</span>}<span class="op">;</span>
+
+<span class="kw">let</span> x<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> primes[<span class="num">0</span>]<span class="op">;</span>        <span class="cmt">// read → 2</span>
+primes[<span class="num">2</span>] <span class="op">=</span> <span class="num">99</span><span class="op">;</span>           <span class="cmt">// write</span>
+primes[i <span class="op">+</span> <span class="num">1</span>] <span class="op">=</span> x<span class="op">;</span>       <span class="cmt">// expression index</span></pre></div>
+        </div>
+        <div class="warn">Nova performs compile-time bounds checking for literal indices (e.g. <code>arr[10]</code> on a size-5 array is a compile error). Dynamic indices (<code>arr[i]</code>) are not checked at runtime.</div>
+
+        <h3>Arrays of Structs</h3>
+        <p>You can create arrays of user-defined struct types. The compiler correctly calculates the memory offsets for accessing fields within the array elements.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">struct</span> <span class="typ">Point</span> {
+    x<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+    y<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+}
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> <span class="kw">mut</span> arr<span class="op">:</span> <span class="typ">Point</span>[<span class="num">5</span>] <span class="op">=</span> {}<span class="op">;</span>
+    arr[<span class="num">0</span>]<span class="op">.</span>x <span class="op">=</span> <span class="num">10</span><span class="op">;</span>
+    arr[<span class="num">0</span>]<span class="op">.</span>y <span class="op">=</span> <span class="num">20</span><span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, arr[<span class="num">0</span>]<span class="op">.</span>x)<span class="op">;</span>
+}</pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="structs">
+        <div class="section-eyebrow">Structs</div>
+        <h2>Structs</h2>
+        <p>Structs let you group related data into a named type. Struct names must start with an uppercase letter.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">struct</span> <span class="typ">Point</span> {
+    x<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+    y<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+}
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> point<span class="op">:</span> <span class="typ">Point</span> <span class="op">=</span> {
+        x<span class="op">:</span> <span class="num">1</span><span class="op">,</span>
+        y<span class="op">:</span> <span class="num">2</span>
+    }<span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, point<span class="op">.</span>x)<span class="op">;</span>   <span class="cmt">// 1</span>
+}</pre></div>
+        </div>
+
+        <h3>Methods</h3>
+        <p>Functions can be defined inside an <code>impl</code> block. Inside a method, all fields are accessible via <code>self</code>. Field changes are written back to the instance automatically.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">struct</span> <span class="typ">Counter</span> {
+    value<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+}
+
+<span class="kw">impl</span> <span class="typ">Counter</span> {
+    <span class="kw">fn</span> <span class="fn">increment</span>(<span class="op">&amp;</span><span class="kw">mut</span> <span class="kw">self</span>, n<span class="op">:</span> <span class="typ">i32</span>) {
+        <span class="kw">self</span><span class="op">.</span>value <span class="op">+=</span> n<span class="op">;</span>
+    }
+
+    <span class="kw">fn</span> <span class="fn">get</span>(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> <span class="typ">i32</span> {
+        <span class="kw">return</span> <span class="kw">self</span><span class="op">.</span>value<span class="op">;</span>
+    }
+}
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> <span class="kw">mut</span> c<span class="op">:</span> <span class="typ">Counter</span> <span class="op">=</span> { value<span class="op">:</span> <span class="num">0</span> }<span class="op">;</span>
+    c<span class="op">.</span><span class="fn">increment</span>(<span class="num">5</span>)<span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, c<span class="op">.</span><span class="fn">get</span>())<span class="op">;</span>   <span class="cmt">// 5</span>
+}</pre></div>
+        </div>
+        <div class="note">Struct fields support all primitive types: <code>i32</code>, <code>i64</code>, <code>f32</code>, <code>f64</code>, <code>char</code>, <code>string</code>. Nested structs are not yet supported.</div>
+    </div>
+
+    <div class="docs-section" id="casts">
+        <div class="section-eyebrow">Types</div>
+        <h2>Explicit Casts</h2>
+        <p>Use <code>VAR as TYPE</code> to cast. The compiler warns when precision is lost.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">let</span> a<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">7</span><span class="op">;</span>
+<span class="kw">let</span> d<span class="op">:</span> <span class="typ">f64</span> <span class="op">=</span> a <span class="kw">as</span> <span class="typ">f64</span> <span class="op">/</span> <span class="num">2.0</span><span class="op">;</span>   <span class="cmt">// → 3.5</span>
+
+<span class="kw">let</span> pi<span class="op">:</span> <span class="typ">f64</span> <span class="op">=</span> <span class="num">3.14159</span><span class="op">;</span>
+<span class="kw">let</span> truncated<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> pi <span class="kw">as</span> <span class="typ">i32</span><span class="op">;</span>       <span class="cmt">// → 3</span>
+
+<span class="kw">let</span> small<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">1000000</span><span class="op">;</span>
+<span class="kw">let</span> big<span class="op">:</span> <span class="typ">i64</span> <span class="op">=</span> small <span class="kw">as</span> <span class="typ">i64</span> <span class="op">*</span> <span class="num">1000000</span><span class="op">;</span>
+
+<span class="kw">let</span> ch<span class="op">:</span> <span class="typ">char</span> <span class="op">=</span> <span class="str">'A'</span><span class="op">;</span>
+<span class="kw">let</span> code<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> ch <span class="kw">as</span> <span class="typ">i32</span><span class="op">;</span>             <span class="cmt">// → 65</span></pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="type-safety">
+        <div class="section-eyebrow">Type Safety</div>
+        <h2>Type Safety</h2>
+        <p>Nova enforces strict type rules at compile time. There are no implicit conversions between numeric types — explicit casts are required.</p>
+
+        <h3>No implicit i32 ↔ f32 conversion</h3>
+        <p>Arithmetic between <code>i32</code> and <code>f32</code> is a compile error. Both sides must be the same type.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">let</span> x<span class="op">:</span> <span class="typ">f32</span> <span class="op">=</span> <span class="num">3.14</span><span class="op">;</span>
+<span class="kw">let</span> n<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">2</span><span class="op">;</span>
+<span class="cmt">// let r: f32 = x * n;    ← ERROR: cannot mix f32 and i32</span>
+<span class="kw">let</span> r<span class="op">:</span> <span class="typ">f32</span> <span class="op">=</span> x <span class="op">*</span> <span class="num">2.0</span><span class="op">;</span>   <span class="cmt">// OK</span></pre></div>
+        </div>
+
+        <h3>Literal type must match declaration</h3>
+        <p>Initializing an <code>f32</code> variable with an integer literal is an error — the compiler suggests the fix.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="cmt">// let radius: f32 = 2;     ← ERROR: use 2.0</span>
+<span class="kw">let</span> radius<span class="op">:</span> <span class="typ">f32</span> <span class="op">=</span> <span class="num">2.0</span><span class="op">;</span>  <span class="cmt">// OK</span></pre></div>
+        </div>
+
+        <h3>Compile-time array bounds checking</h3>
+        <p>Accessing an array with a literal index that is out of range is caught at compile time.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">let</span> <span class="kw">mut</span> arr<span class="op">:</span> <span class="typ">i32</span>[<span class="num">5</span>] <span class="op">=</span> {}<span class="op">;</span>
+<span class="cmt">// arr[10] = 1;   ← ERROR: index 10 out of bounds (valid: 0..4)</span>
+arr[<span class="num">4</span>] <span class="op">=</span> <span class="num">1</span><span class="op">;</span>        <span class="cmt">// OK</span>
+arr[i] <span class="op">=</span> <span class="num">1</span><span class="op">;</span>        <span class="cmt">// OK — dynamic index not checked</span></pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="stdlib">
+        <div class="section-eyebrow">Standard Library</div>
+        <h2>Standard Library</h2>
+        <p>Nova ships with a standard library under <code>/usr/local/lib/nova/</code>. Headers are included with <code>#include &lt;name.nh&gt;</code>. The compiler automatically finds and compiles the corresponding <code>.npp</code> implementation alongside your code.</p>
+        <div class="note">All stdlib functions live under a namespace. Use the <code>namespace::</code> prefix to call them — e.g. <code>std::printf(...)</code>.</div>
+    </div>
+
+    <div class="docs-section" id="stdio">
+        <div class="section-eyebrow">Standard Library</div>
+        <h2>stdio — printf, print &amp; scanf</h2>
+        <p>Include <code>&lt;stdio.nh&gt;</code> to get <code>std::printf</code> for formatted output, <code>std::print</code> for quick single-value output, and <code>std::scanf</code> for formatted input. All are implemented without libc — they use syscalls directly.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">hello.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"Hello, %s!\n"</span>, <span class="str">"World"</span>)<span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"int: %d  long: %ld  double: %f\n"</span>, <span class="num">42</span>, <span class="num">9876543210</span>, <span class="num">3.14</span>)<span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"char: %c  str: %s\n"</span>, <span class="str">'A'</span>, <span class="str">"nova"</span>)<span class="op">;</span>
+}</pre></div>
+        </div>
+        <h3>printf format specifiers</h3>
+        <table class="docs-table">
+            <thead><tr><th>Specifier</th><th>Type</th></tr></thead>
+            <tbody>
+                <tr><td>%d  %i</td><td>i32 (signed)</td></tr>
+                <tr><td>%u</td><td>i32 (unsigned)</td></tr>
+                <tr><td>%ld  %li</td><td>i64 (signed)</td></tr>
+                <tr><td>%lu</td><td>i64 (unsigned)</td></tr>
+                <tr><td>%f  %g  %e</td><td>f32 or f64</td></tr>
+                <tr><td>%c</td><td>char</td></tr>
+                <tr><td>%s</td><td>string</td></tr>
+                <tr><td>%%</td><td>literal %</td></tr>
+            </tbody>
+        </table>
+        <h3>std::print — type-overloaded shorthand</h3>
+        <p><code>std::print</code> prints a value followed by a newline. The correct overload is selected automatically based on the argument type.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">print</span>(<span class="num">42</span>)<span class="op">;</span>           <span class="cmt">// i32</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">print</span>(<span class="num">3.14</span>)<span class="op">;</span>         <span class="cmt">// f64</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">print</span>(<span class="str">"hello"</span>)<span class="op">;</span>      <span class="cmt">// string</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">print</span>(<span class="str">'Z'</span>)<span class="op">;</span>          <span class="cmt">// char</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">print</span>(<span class="num">9876543210</span>)<span class="op">;</span>   <span class="cmt">// i64 (auto-promoted)</span>
+}</pre></div>
+        </div>
+        <h3>std::scanf — formatted input</h3>
+        <p><code>std::scanf</code> reads formatted input from stdin. It works exactly like C's <code>scanf</code> — same format specifiers, same pointer arguments.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> <span class="kw">mut</span> n<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">0</span><span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">scanf</span>(<span class="str">"%d"</span>, <span class="op">&amp;</span>n)<span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"you entered: %d\n"</span>, n)<span class="op">;</span>
+}</pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="math">
+        <div class="section-eyebrow">Standard Library</div>
+        <h2>math — sqrt</h2>
+        <p>Include <code>&lt;math.nh&gt;</code> for mathematical functions. <code>std::sqrt</code> is overloaded for <code>i32</code>, <code>f32</code>, and <code>f64</code>.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+<span class="kw">#include</span> <span class="str">&lt;math.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%f\n"</span>, <span class="fn">std</span><span class="op">::</span><span class="fn">sqrt</span>(<span class="num">2</span>))<span class="op">;</span>    <span class="cmt">// i32 overload → 1.414214</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%f\n"</span>, <span class="fn">std</span><span class="op">::</span><span class="fn">sqrt</span>(<span class="num">9.0</span>))<span class="op">;</span>  <span class="cmt">// f64 overload → 3.000000</span>
+}</pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="namespaces">
+        <div class="section-eyebrow">Standard Library</div>
+        <h2>Namespaces</h2>
+        <p>Header files (<code>.nh</code>) declare a namespace with the <code>namespace</code> keyword. All functions declared after it belong to that namespace and must be called with the <code>namespace::</code> prefix.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">mylib.nh</div></div>
+            <div class="code-block-body"><pre><span class="kw">namespace</span> <span class="typ">math</span><span class="op">;</span>
+
+<span class="kw">fn</span> <span class="fn">add</span>(a<span class="op">:</span> <span class="typ">i32</span>, b<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span><span class="op">;</span>
+<span class="kw">fn</span> <span class="fn">square</span>(x<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span><span class="op">;</span></pre></div>
+        </div>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">main.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+<span class="kw">#include</span> <span class="str">"mylib.nh"</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, <span class="fn">math</span><span class="op">::</span><span class="fn">add</span>(<span class="num">3</span>, <span class="num">4</span>))<span class="op">;</span>
+}</pre></div>
+        </div>
+        <div class="note">Calling a namespace function without the correct prefix — or without the corresponding <code>#include</code> — is a compile-time error.</div>
+    </div>
+
+    <div class="docs-section" id="overloading">
+        <div class="section-eyebrow">Functions</div>
+        <h2>Function Overloading</h2>
+        <p>Multiple functions can share the same name as long as their parameter types differ. The compiler resolves the correct version at call time based on the argument types.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">square</span>(x<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span>   { <span class="kw">return</span> x <span class="op">*</span> x<span class="op">;</span> }
+<span class="kw">fn</span> <span class="fn">square</span>(x<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span>   { <span class="kw">return</span> x <span class="op">*</span> x<span class="op">;</span> }
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>,   <span class="fn">square</span>(<span class="num">5</span>))<span class="op">;</span>     <span class="cmt">// → 25 (i32)</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%f\n"</span>, <span class="fn">square</span>(<span class="num">2.5</span>))<span class="op">;</span>   <span class="cmt">// → 6.250000 (f64)</span>
+}</pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="headers">
+        <div class="section-eyebrow">Headers</div>
+        <h2>Header Files (.nh)</h2>
+        <p>A <code>.nh</code> file declares the public interface of a Nova library — function signatures, struct definitions, and global constants. It contains <strong>no function bodies</strong>. The corresponding <code>.npp</code> file provides the implementations.</p>
+        <p>When you write <code>#include &lt;name.nh&gt;</code> (for standard libraries) or <code>#include "name.nh"</code> (for local libraries), the compiler reads the header, registers all declarations, but passing the <code>.npp</code> file to the compiler is required.</p>
+
+        <h3>Anatomy of a header</h3>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">geometry.nh</div></div>
+            <div class="code-block-body"><pre><span class="cmt">// geometry.nh — public interface for the geometry library</span>
+
+<span class="kw">namespace</span> <span class="typ">geo</span><span class="op">;</span>
+
+<span class="cmt">// Struct declarations are allowed in headers</span>
+<span class="kw">struct</span> <span class="typ">Point</span> {
+    x<span class="op">:</span> <span class="typ">f64</span><span class="op">;</span>
+    y<span class="op">:</span> <span class="typ">f64</span><span class="op">;</span>
+}
+
+<span class="cmt">// Function signatures — type + name + params + semicolon, no body</span>
+<span class="kw">fn</span> <span class="fn">distance</span>(x1<span class="op">:</span> <span class="typ">f64</span>, y1<span class="op">:</span> <span class="typ">f64</span>, x2<span class="op">:</span> <span class="typ">f64</span>, y2<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span><span class="op">;</span>
+<span class="kw">fn</span> <span class="fn">area</span>(base<span class="op">:</span> <span class="typ">f64</span>, height<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span><span class="op">;</span>
+<span class="kw">fn</span> <span class="fn">sign</span>(n<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span><span class="op">;</span></pre></div>
+        </div>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">geometry.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+<span class="kw">#include</span> <span class="str">&lt;math.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">distance</span>(x1<span class="op">:</span> <span class="typ">f64</span>, y1<span class="op">:</span> <span class="typ">f64</span>, x2<span class="op">:</span> <span class="typ">f64</span>, y2<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span> {
+    <span class="kw">let</span> dx<span class="op">:</span> <span class="typ">f64</span> <span class="op">=</span> x2 <span class="op">-</span> x1<span class="op">;</span>
+    <span class="kw">let</span> dy<span class="op">:</span> <span class="typ">f64</span> <span class="op">=</span> y2 <span class="op">-</span> y1<span class="op">;</span>
+    <span class="kw">return</span> <span class="fn">std</span><span class="op">::</span><span class="fn">sqrt</span>(dx <span class="op">*</span> dx <span class="op">+</span> dy <span class="op">*</span> dy)<span class="op">;</span>
+}
+
+<span class="kw">fn</span> <span class="fn">area</span>(base<span class="op">:</span> <span class="typ">f64</span>, height<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span> {
+    <span class="kw">return</span> base <span class="op">*</span> height <span class="op">/</span> <span class="num">2.0</span><span class="op">;</span>
+}
+
+<span class="kw">fn</span> <span class="fn">sign</span>(n<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span> {
+    <span class="kw">if</span>(n <span class="op">&gt;</span> <span class="num">0</span>) { <span class="kw">return</span> <span class="num">1</span><span class="op">;</span> }
+    <span class="kw">if</span>(n <span class="op">&lt;</span> <span class="num">0</span>) { <span class="kw">return</span> <span class="num">0</span> <span class="op">-</span> <span class="num">1</span><span class="op">;</span> }
+    <span class="kw">return</span> <span class="num">0</span><span class="op">;</span>
+}</pre></div>
+        </div>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">main.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+<span class="kw">#include</span> <span class="str">"geometry.nh"</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> d<span class="op">:</span> <span class="typ">f64</span> <span class="op">=</span> <span class="fn">geo</span><span class="op">::</span><span class="fn">distance</span>(<span class="num">0.0</span>, <span class="num">0.0</span>, <span class="num">3.0</span>, <span class="num">4.0</span>)<span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"distance = %f\n"</span>, d)<span class="op">;</span>   <span class="cmt">// 5.000000</span>
+
+    <span class="kw">let</span> a<span class="op">:</span> <span class="typ">f64</span> <span class="op">=</span> <span class="fn">geo</span><span class="op">::</span><span class="fn">area</span>(<span class="num">6.0</span>, <span class="num">4.0</span>)<span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"area = %f\n"</span>, a)<span class="op">;</span>       <span class="cmt">// 12.000000</span>
+}</pre></div>
+        </div>
+
+        <h3>System vs local headers</h3>
+        <table class="docs-table">
+            <thead><tr><th>Syntax</th><th>Lookup path</th></tr></thead>
+            <tbody>
+                <tr><td>#include &lt;name.nh&gt;</td><td><code>$NOVA_STDLIB_PATH</code> or <code>/usr/local/lib/nova/</code></td></tr>
+                <tr><td>#include "name.nh"</td><td>Relative to the current source file</td></tr>
+            </tbody>
+        </table>
+        <div class="note">Each header is included at most once per compilation unit — the compiler tracks and ignores duplicate includes automatically.</div>
+    </div>
+
+    <div class="docs-section" id="best-practices">
+        <div class="section-eyebrow">Headers</div>
+        <h2>Best Practices</h2>
+
+        <h3>Always declare a namespace in every .nh file</h3>
+        <p>A namespace makes it explicit where a function comes from and prevents name collisions when multiple libraries are combined. Without one, all names land in the global scope and can silently shadow each other.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="cmt">// ✗ Avoid — names pollute global scope, collisions are silent</span>
+<span class="kw">fn</span> <span class="fn">clamp</span>(v<span class="op">:</span> <span class="typ">i32</span>, lo<span class="op">:</span> <span class="typ">i32</span>, hi<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span><span class="op">;</span>
+<span class="kw">fn</span> <span class="fn">lerp</span>(a<span class="op">:</span> <span class="typ">f64</span>, b<span class="op">:</span> <span class="typ">f64</span>, t<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span><span class="op">;</span>
+
+<span class="cmt">// ✓ Prefer — origin is clear, call site is unambiguous</span>
+<span class="kw">namespace</span> <span class="typ">math</span><span class="op">;</span>
+<span class="kw">fn</span> <span class="fn">clamp</span>(v<span class="op">:</span> <span class="typ">i32</span>, lo<span class="op">:</span> <span class="typ">i32</span>, hi<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span><span class="op">;</span>
+<span class="kw">fn</span> <span class="fn">lerp</span>(a<span class="op">:</span> <span class="typ">f64</span>, b<span class="op">:</span> <span class="typ">f64</span>, t<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span><span class="op">;</span></pre></div>
+        </div>
+        <p>With a namespace, call sites become self-documenting — <code>math::clamp(x, 0, 100)</code> is immediately obvious in a way that bare <code>clamp(x, 0, 100)</code> never is.</p>
+
+
+        <h3>Declare functions above their callers</h3>
+        <p>Nova resolves names top-to-bottom within a file. If function <code>B</code> calls function <code>A</code>, define <code>A</code> first. For mutual recursion between two files, use a header to forward-declare one of them.</p>
+
+        <h3>Use overloading instead of name suffixes</h3>
+        <p>Instead of <code>sqrtInt</code>, <code>sqrtFloat</code>, <code>sqrtDouble</code>, define one function name with different parameter types. The compiler picks the correct version automatically — and callers don't need to care about the underlying type.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="cmt">// ✗ Avoid</span>
+<span class="kw">fn</span> <span class="fn">absInt</span>(n<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span>    { <span class="kw">return</span> n <span class="op">&lt;</span> <span class="num">0</span> ? <span class="num">0</span> <span class="op">-</span> n : n<span class="op">;</span> }
+<span class="kw">fn</span> <span class="fn">absDouble</span>(n<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span> { <span class="kw">return</span> n <span class="op">&lt;</span> <span class="num">0.0</span> ? <span class="num">0.0</span> <span class="op">-</span> n : n<span class="op">;</span> }
+
+<span class="cmt">// ✓ Prefer</span>
+<span class="kw">fn</span> <span class="fn">abs</span>(n<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span>    { <span class="kw">return</span> n <span class="op">&lt;</span> <span class="num">0</span> ? <span class="num">0</span> <span class="op">-</span> n : n<span class="op">;</span> }
+<span class="kw">fn</span> <span class="fn">abs</span>(n<span class="op">:</span> <span class="typ">f64</span>) <span class="op">-&gt;</span> <span class="typ">f64</span>    { <span class="kw">return</span> n <span class="op">&lt;</span> <span class="num">0.0</span> ? <span class="num">0.0</span> <span class="op">-</span> n : n<span class="op">;</span> }</pre></div>
+        </div>
+
+        <h3>Use i64 for large integers</h3>
+        <p><code>i32</code> holds values up to 2,147,483,647. For counters, byte offsets, or values that can exceed that range, use <code>i64</code>. Integer literals larger than that limit are automatically promoted to <code>i64</code> by the compiler — but when doing arithmetic that could overflow, cast explicitly before the operation.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="cmt">// ✗ Overflow — arithmetic done in i32, widened too late</span>
+<span class="kw">let</span> bad<span class="op">:</span> <span class="typ">i64</span>  <span class="op">=</span> <span class="num">1000000</span> <span class="op">*</span> <span class="num">1000000</span><span class="op">;</span>
+
+<span class="cmt">// ✓ Correct — cast before the multiplication</span>
+<span class="kw">let</span> good<span class="op">:</span> <span class="typ">i64</span> <span class="op">=</span> <span class="num">1000000</span> <span class="kw">as</span> <span class="typ">i64</span> <span class="op">*</span> <span class="num">1000000</span><span class="op">;</span>
+
+<span class="cmt">// ✓ Auto-promoted — literal exceeds i32 max</span>
+<span class="kw">let</span> size<span class="op">:</span> <span class="typ">i64</span> <span class="op">=</span> <span class="num">9876543210</span><span class="op">;</span></pre></div>
+        </div>
+
+        <h3>Prefer f64 over f32 for precision</h3>
+        <p><code>f64</code> gives 15–16 significant digits; <code>f32</code> gives only 6–7. Use <code>f32</code> only when you specifically need 32-bit representation — for example, when interfacing with hardware or external binary formats that require it.</p>
+
+        <h3>One concern per .npp file</h3>
+        <p>Keep each <code>.npp</code> focused on a single topic — strings, geometry, IO. Pair it with a <code>.nh</code> that exposes only what callers need and hides internal helpers. This makes each module independently testable and easy to reuse across projects.</p>
+    </div>
+
+        <div class="docs-section" id="comments">
+        <div class="section-eyebrow">Built-ins</div>
+        <h2>Comments</h2>
+        <p>Only single-line comments are supported. Use <code>//</code> to start a comment anywhere on a line.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+            <div class="code-block-body"><pre><span class="cmt">// This is a comment</span>
+<span class="kw">let</span> x<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">10</span><span class="op">;</span>   <span class="cmt">// inline comment</span></pre></div>
+        </div>
+    </div>
+
+    <div class="docs-section" id="compiler">
+        <div class="section-eyebrow">Tooling</div>
+        <h2>Compiler CLI</h2>
+        <table class="docs-table">
+            <thead><tr><th>Flag</th><th>Description</th></tr></thead>
+            <tbody>
+                <tr><td>n++ file.npp</td><td>Compile to executable with same name</td></tr>
+                <tr><td>n++ file.npp file2.npp</td><td>Compile multiple files into one executable</td></tr>
+                <tr><td>-o &lt;name&gt;</td><td>Set output file name</td></tr>
+                <tr><td>-O2</td><td>Enable balanced LLVM optimizations</td></tr>
+                <tr><td>-O3</td><td>Enable aggressive LLVM optimizations</td></tr>
+                <tr><td>-w [file]</td><td>Open interactive terminal editor</td></tr>
+                <tr><td>--version</td><td>Print compiler version and exit</td></tr>
+                <tr><td>--help</td><td>Print usage reference and exit</td></tr>
+            </tbody>
+        </table>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">terminal</div></div>
+            <div class="code-block-body"><pre>$ ./n++ app.npp
+$ ./n++ app.npp -o release
+$ ./n++ app.npp -O3
+$ ./n++ app.npp -o release -O3
+$ ./n++ --version</pre></div>
+        </div>
+        
+        <h3>Output Extensions</h3>
+        <table class="docs-table">
+            <thead><tr><th>Extension</th><th>Result</th></tr></thead>
+            <tbody>
+                <tr><td>(none)</td><td>Native executable</td></tr>
+                <tr><td>.exe / .out</td><td>Native executable</td></tr>
+                <tr><td>.so / .dylib</td><td>Shared library (-shared)</td></tr>
+                <tr><td>.a</td><td>Static library (ar rcs)</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="docs-section" id="editor">
+        <div class="section-eyebrow">Tooling</div>
+        <h2>Interactive Editor (-w)</h2>
+        <p>Nova ships with a built-in terminal editor. Launch it with <code>-w</code>, optionally passing a file to open.</p>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">terminal</div></div>
+            <div class="code-block-body"><pre>$ n++ -w                  <span class="cmt"># new file (prompts for name)</span>
+$ n++ -w myfile.npp       <span class="cmt"># open existing file</span></pre></div>
+        </div>
+        <table class="docs-table">
+            <thead><tr><th>Shortcut</th><th>Action</th></tr></thead>
+            <tbody>
+                <tr><td>Ctrl+S</td><td>Save and compile (stays in editor)</td></tr>
+                <tr><td>Ctrl+X</td><td>Save, compile, and exit</td></tr>
+                <tr><td>Ctrl+Q</td><td>Quit without compiling</td></tr>
+                <tr><td>Ctrl+R</td><td>Rename / move the file</td></tr>
+                <tr><td>Arrow keys</td><td>Navigate — Home, End, PgUp, PgDn supported</td></tr>
+                <tr><td>Tab</td><td>Insert 4 spaces</td></tr>
+            </tbody>
+        </table>
+        <div class="note">The editor highlights keywords, types, numbers, strings, and comments in real time. An unsaved changes indicator (●) appears in the status bar.</div>
+    </div>
+
+    <div class="docs-section" id="examples">
+        <div class="section-eyebrow">Examples</div>
+        <h2>Full Examples</h2>
+
+        <h3>Fibonacci</h3>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">fib.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">fib</span>(n<span class="op">:</span> <span class="typ">i32</span>) <span class="op">-&gt;</span> <span class="typ">i32</span> {
+    <span class="kw">if</span>(n <span class="op">&lt;=</span> <span class="num">1</span>) { <span class="kw">return</span> n<span class="op">;</span> }
+    <span class="kw">return</span> <span class="fn">fib</span>(n <span class="op">-</span> <span class="num">1</span>) <span class="op">+</span> <span class="fn">fib</span>(n <span class="op">-</span> <span class="num">2</span>)<span class="op">;</span>
+}
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">for</span>(<span class="kw">let</span> <span class="kw">mut</span> i<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">0</span><span class="op">;</span> i <span class="op">&lt;=</span> <span class="num">10</span><span class="op">;</span> i<span class="op">++</span>) {
+        <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, <span class="fn">fib</span>(i))<span class="op">;</span>
+    }
+}</pre></div>
+        </div>
+
+        <h3>Sieve of Eratosthenes</h3>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">sieve.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">let</span> limit<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">100000</span><span class="op">;</span>
+<span class="kw">let</span> <span class="kw">mut</span> isPrime<span class="op">:</span> <span class="typ">i32</span>[<span class="num">100001</span>] <span class="op">=</span> {}<span class="op">;</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">for</span>(<span class="kw">let</span> <span class="kw">mut</span> i<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">2</span><span class="op">;</span> i <span class="op">&lt;=</span> limit<span class="op">;</span> i<span class="op">++</span>) {
+        <span class="kw">if</span>(isPrime[i] <span class="op">==</span> <span class="num">0</span>) {
+            <span class="kw">let</span> <span class="kw">mut</span> j<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> i <span class="op">*</span> <span class="num">2</span><span class="op">;</span>
+            <span class="kw">while</span>(j <span class="op">&lt;=</span> limit) {
+                isPrime[j] <span class="op">=</span> <span class="num">1</span><span class="op">;</span>
+                j <span class="op">+=</span> i<span class="op">;</span>
+            }
+        }
+    }
+    <span class="kw">for</span>(<span class="kw">let</span> <span class="kw">mut</span> n<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">2</span><span class="op">;</span> n <span class="op">&lt;=</span> limit<span class="op">;</span> n<span class="op">++</span>) {
+        <span class="kw">if</span>(isPrime[n] <span class="op">==</span> <span class="num">0</span>) {
+            <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, n)<span class="op">;</span>
+        }
+    }
+}</pre></div>
+        </div>
+
+        <h3>FizzBuzz</h3>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">fizzbuzz.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">for</span>(<span class="kw">let</span> <span class="kw">mut</span> i<span class="op">:</span> <span class="typ">i32</span> <span class="op">=</span> <span class="num">1</span><span class="op">;</span> i <span class="op">&lt;=</span> <span class="num">100</span><span class="op">;</span> i<span class="op">++</span>) {
+        <span class="kw">if</span>(i <span class="op">%</span> <span class="num">15</span> <span class="op">==</span> <span class="num">0</span>) {
+            <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"FizzBuzz\n"</span>)<span class="op">;</span>
+        } <span class="kw">else if</span>(i <span class="op">%</span> <span class="num">3</span> <span class="op">==</span> <span class="num">0</span>) {
+            <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"Fizz\n"</span>)<span class="op">;</span>
+        } <span class="kw">else if</span>(i <span class="op">%</span> <span class="num">5</span> <span class="op">==</span> <span class="num">0</span>) {
+            <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"Buzz\n"</span>)<span class="op">;</span>
+        } <span class="kw">else</span> {
+            <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"%d\n"</span>, i)<span class="op">;</span>
+        }
+    }
+}</pre></div>
+        </div>
+
+        <h3>Struct with Methods</h3>
+        <div class="code-block">
+            <div class="code-block-titlebar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><div class="code-filename">rectangle.npp</div></div>
+            <div class="code-block-body"><pre><span class="kw">#include</span> <span class="str">&lt;stdio.nh&gt;</span>
+
+<span class="kw">struct</span> <span class="typ">Rectangle</span> {
+    width<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+    height<span class="op">:</span> <span class="typ">i32</span><span class="op">;</span>
+}
+
+<span class="kw">impl</span> <span class="typ">Rectangle</span> {
+    <span class="kw">fn</span> <span class="fn">area</span>(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> <span class="typ">i32</span> {
+        <span class="kw">return</span> <span class="kw">self</span><span class="op">.</span>width <span class="op">*</span> <span class="kw">self</span><span class="op">.</span>height<span class="op">;</span>
+    }
+
+    <span class="kw">fn</span> <span class="fn">perimeter</span>(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> <span class="typ">i32</span> {
+        <span class="kw">return</span> (<span class="kw">self</span><span class="op">.</span>width <span class="op">+</span> <span class="kw">self</span><span class="op">.</span>height) <span class="op">*</span> <span class="num">2</span><span class="op">;</span>
+    }
+}
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> <span class="kw">mut</span> r<span class="op">:</span> <span class="typ">Rectangle</span> <span class="op">=</span> { width<span class="op">:</span> <span class="num">6</span><span class="op">,</span> height<span class="op">:</span> <span class="num">4</span> }<span class="op">;</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"area=%d\n"</span>, r<span class="op">.</span><span class="fn">area</span>())<span class="op">;</span>           <span class="cmt">// 24</span>
+    <span class="fn">std</span><span class="op">::</span><span class="fn">printf</span>(<span class="str">"perimeter=%d\n"</span>, r<span class="op">.</span><span class="fn">perimeter</span>())<span class="op">;</span> <span class="cmt">// 20</span>
+}</pre></div>
+        </div>
+    </div>
+
+</main>
+</div>
+
+<footer>
+    <div class="footer-brand"><span>▸</span> nova lang</div>
+    <div class="footer-links">
+        <a href="index.html">Home</a>
+        <a href="download.html">Download</a>
+    </div>
+</footer>
+
+<script>
+// Active sidebar link on scroll
+const sections = document.querySelectorAll('.docs-section');
+const links = document.querySelectorAll('.sidebar-link');
+
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+        if (e.isIntersecting) {
+            links.forEach(l => l.classList.remove('active'));
+            const active = document.querySelector(`.sidebar-link[href="#${e.target.id}"]`);
+            if (active) active.classList.add('active');
+        }
+    });
+}, { rootMargin: '-30% 0px -60% 0px' });
+
+sections.forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>

@@ -1,0 +1,8 @@
+namespace std;
+
+fn sqrt(n: i32) -> f64;
+fn sqrt(n: i64) -> f64;
+fn sqrt(n: f64) -> f64;
+fn pot(n: i32, e: i32) -> i32;
+fn pot(n: i64, e: i64) -> i64;
+fn pot(n: f64, e: f64) -> f64;

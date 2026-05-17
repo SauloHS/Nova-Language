@@ -1,0 +1,22 @@
+void imprimeSePositivo(int x) {
+    if(x > 0) then {
+        print(x);
+        print("É positivo!");
+    } else if(x == 0) then {
+        print(0);
+    } else {
+        print("Negativo!");
+        print(x);
+        return;
+    }
+}
+int main(){
+    imprimeSePositivo(10 - 15);
+    int a = 0; 
+    int b = 1;
+    if(a == 0 && b == 2) then {
+        print("Não ta funcionando");
+    } else if(a == 0 && b == 1) then {
+        print("ta certo");
+    }
+}

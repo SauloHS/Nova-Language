@@ -1,0 +1,1 @@
+Read the full documentation at https://npplang.netlify.app

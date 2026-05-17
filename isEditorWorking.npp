@@ -1,4 +1,0 @@
-#include <stdio.nh>
-fn main(){
-    std::printf("Hello, World!\n");
-}

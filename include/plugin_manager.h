@@ -1,5 +1,8 @@
 #pragma once
+#include <memory>
 #include <map>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +22,20 @@ struct LoadedPlugin {
   const char* (*fn_commands)();
   NovaResponse (*fn_on_event)(NovaEvent*, NovaBuffer*);
   void (*fn_free_resp)(NovaResponse*);
+  std::shared_ptr<std::mutex> execMutex;
+};
+
+struct AsyncPluginCall;
+
+struct QueuedPluginEvent {
+  std::shared_ptr<AsyncPluginCall> call;
+  int bufferRevision = 0;
+};
+
+struct PluginRuntimeState {
+  bool running = false;
+  std::optional<QueuedPluginEvent> queuedEvent;
+  int droppedEvents = 0;
 };
 
 typedef enum {
@@ -63,4 +80,9 @@ std::string pluginManagerFireEvent(NovaEvent* event, NovaBuffer* buffer,
                                    std::vector<std::string>& lines, int& curRow,
                                    int& curCol, bool& dirty,
                                    std::vector<NovaHighlight>& highlights,
-                                   std::string& inlineText);
+                                   std::string& inlineText,
+                                   int& bufferRevision);
+std::string pluginManagerPoll(std::vector<std::string>& lines, int& curRow,
+                              int& curCol, bool& dirty,
+                              std::vector<NovaHighlight>& highlights,
+                              std::string& inlineText, int& bufferRevision);

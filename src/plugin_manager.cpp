@@ -1,8 +1,12 @@
 #include "plugin_manager.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
+#include <future>
 #include <iostream>
+#include <memory>
+#include <optional>
 #include <sstream>
 
 #ifdef _WIN32
@@ -23,6 +27,69 @@
 #endif
 
 static std::vector<LoadedPlugin> g_plugins;
+static std::map<LoadedPlugin*, PluginRuntimeState> g_pluginStates;
+
+struct AsyncPluginCall {
+  NovaEvent event = {};
+  NovaBuffer buffer = {};
+  bool hasFilename = false;
+  bool hasCommand = false;
+  bool hasCommandArgs = false;
+  bool hasUiSelectedText = false;
+  std::string filename;
+  std::string command;
+  std::string commandArgs;
+  std::string uiSelectedText;
+  std::vector<std::string> lines;
+  std::vector<char*> rawLines;
+
+  AsyncPluginCall(NovaEvent* srcEvent, NovaBuffer* srcBuffer) {
+    if (srcBuffer) {
+      hasFilename = srcBuffer->filename != nullptr;
+      if (hasFilename) filename = srcBuffer->filename;
+      lines.reserve(srcBuffer->lineCount);
+      rawLines.reserve(srcBuffer->lineCount);
+      for (int i = 0; i < srcBuffer->lineCount; i++) {
+        lines.push_back(srcBuffer->lines && srcBuffer->lines[i]
+                            ? srcBuffer->lines[i]
+                            : "");
+      }
+      for (auto& line : lines) rawLines.push_back(line.data());
+      buffer.lines = rawLines.empty() ? nullptr : rawLines.data();
+      buffer.lineCount = (int)lines.size();
+      buffer.curRow = srcBuffer->curRow;
+      buffer.curCol = srcBuffer->curCol;
+      buffer.filename = hasFilename ? filename.c_str() : nullptr;
+      buffer.dirty = srcBuffer->dirty;
+    }
+
+    if (srcEvent) {
+      hasCommand = srcEvent->command != nullptr;
+      hasCommandArgs = srcEvent->commandArgs != nullptr;
+      hasUiSelectedText = srcEvent->uiSelectedText != nullptr;
+      if (hasCommand) command = srcEvent->command;
+      if (hasCommandArgs) commandArgs = srcEvent->commandArgs;
+      if (hasUiSelectedText) uiSelectedText = srcEvent->uiSelectedText;
+      event.type = srcEvent->type;
+      event.key = srcEvent->key;
+      event.command = hasCommand ? command.c_str() : nullptr;
+      event.commandArgs = hasCommandArgs ? commandArgs.c_str() : nullptr;
+      event.uiResultType = srcEvent->uiResultType;
+      event.uiSelectedIndex = srcEvent->uiSelectedIndex;
+      event.uiSelectedText =
+          hasUiSelectedText ? uiSelectedText.c_str() : nullptr;
+    }
+  }
+};
+
+struct AsyncPluginTask {
+  LoadedPlugin* plugin = nullptr;
+  int bufferRevision = 0;
+  std::shared_ptr<AsyncPluginCall> call;
+  std::future<NovaResponse> future;
+};
+
+static std::vector<AsyncPluginTask> g_asyncTasks;
 
 // ── Pending UI state
 // ──────────────────────────────────────────────────────────
@@ -66,8 +133,29 @@ static std::vector<std::string> listPluginFiles(const std::string& dir) {
   return files;
 }
 
+static bool pluginHandlesCommand(const LoadedPlugin& plugin,
+                                 const char* command) {
+  if (!command) return false;
+  for (auto& c : plugin.commands)
+    if (c == command) return true;
+  return false;
+}
+
+static bool eventMatchesPlugin(const LoadedPlugin& plugin,
+                               const NovaEvent& event) {
+  if (event.type == NOVA_EVENT_COMMAND)
+    return pluginHandlesCommand(plugin, event.command);
+  return true;
+}
+
+static bool shouldDispatchAsync(const NovaEvent& event) {
+  return event.type == NOVA_EVENT_COMMAND || event.type == NOVA_EVENT_UI_RESULT ||
+         event.type == NOVA_EVENT_TICK;
+}
+
 void pluginManagerInit(const std::string& pluginDir) {
   auto files = listPluginFiles(pluginDir);
+  g_plugins.reserve(files.size());
   for (auto& path : files) {
     void* handle = DLOPEN(path.c_str());
     if (!handle) {
@@ -83,6 +171,7 @@ void pluginManagerInit(const std::string& pluginDir) {
         handle, "plugin_on_event");
     p.fn_free_resp =
         (void (*)(NovaResponse*))DLSYM(handle, "nova_free_response");
+    p.execMutex = std::make_shared<std::mutex>();
 
     if (!p.fn_info || !p.fn_on_event || !p.fn_free_resp) {
       std::cerr << "plugin: " << path << " missing required exports\n";
@@ -102,11 +191,18 @@ void pluginManagerInit(const std::string& pluginDir) {
     NovaResponse resp = p.fn_on_event(&ev, &buf);
     p.fn_free_resp(&resp);
     g_plugins.push_back(p);
+    g_pluginStates[&g_plugins.back()] = PluginRuntimeState{};
     std::cerr << "plugin: loaded " << p.name << " v" << p.version << "\n";
   }
 }
 
 void pluginManagerShutdown() {
+  for (auto& task : g_asyncTasks) {
+    NovaResponse resp = task.future.get();
+    if (task.plugin && task.plugin->fn_free_resp) task.plugin->fn_free_resp(&resp);
+  }
+  g_asyncTasks.clear();
+
   for (auto& p : g_plugins) {
     NovaEvent ev = {NOVA_EVENT_SHUTDOWN, 0, nullptr, nullptr, 0, 0, nullptr};
     NovaBuffer buf = {nullptr, 0, 0, 0, nullptr, 0};
@@ -115,6 +211,7 @@ void pluginManagerShutdown() {
     DLCLOSE(p.handle);
   }
   g_plugins.clear();
+  g_pluginStates.clear();
 }
 
 bool pluginManagerHasCommand(const std::string& cmd) {
@@ -130,6 +227,7 @@ PendingUI& pluginManagerGetPendingUI() { return g_pendingUI; }
 
 void pluginManagerClearPendingUI() {
   g_pendingUI.active = false;
+  g_pendingUI.type = NOVA_UI_NONE;
   g_pendingUI.ownerPlugin = nullptr;
   g_pendingUI.items.clear();
 }
@@ -158,33 +256,58 @@ static int styleToAttr(const NovaStyle& s) {
   return attr;
 }
 
+static bool actionMutatesBuffer(const NovaAction& action) {
+  switch (action.type) {
+    case NOVA_ACTION_SET_LINE:
+    case NOVA_ACTION_INSERT_LINE:
+    case NOVA_ACTION_DELETE_LINE:
+    case NOVA_ACTION_SET_CURSOR:
+    case NOVA_ACTION_SET_DIRTY:
+      return true;
+    default:
+      return false;
+  }
+}
+
 // ── Apply response to editor state ───────────────────────────────────────────
 static std::string applyResponse(NovaResponse& resp,
                                  std::vector<std::string>& lines, int& curRow,
                                  int& curCol, bool& dirty,
                                  std::vector<NovaHighlight>& highlights,
-                                 std::string& inlineText, LoadedPlugin* owner) {
+                                 std::string& inlineText, int& bufferRevision,
+                                 bool allowBufferMutations,
+                                 LoadedPlugin* owner) {
   std::string statusMsg;
+  bool skippedMutation = false;
+  auto markBufferChanged = [&]() {
+    dirty = true;
+    bufferRevision++;
+  };
+
   for (int i = 0; i < resp.actionCount; i++) {
     auto& a = resp.actions[i];
+    if (!allowBufferMutations && actionMutatesBuffer(a)) {
+      skippedMutation = true;
+      continue;
+    }
     switch (a.type) {
       case NOVA_ACTION_SET_LINE:
         if (a.row >= 0 && a.row < (int)lines.size()) {
           lines[a.row] = a.text ? a.text : "";
-          dirty = true;
+          markBufferChanged();
         }
         break;
       case NOVA_ACTION_INSERT_LINE:
         if (a.row >= 0 && a.row <= (int)lines.size()) {
           lines.insert(lines.begin() + a.row, a.text ? a.text : "");
-          dirty = true;
+          markBufferChanged();
         }
         break;
       case NOVA_ACTION_DELETE_LINE:
         if (a.row >= 0 && a.row < (int)lines.size()) {
           lines.erase(lines.begin() + a.row);
           if (lines.empty()) lines.push_back("");
-          dirty = true;
+          markBufferChanged();
         }
         break;
       case NOVA_ACTION_SET_CURSOR:
@@ -195,7 +318,7 @@ static std::string applyResponse(NovaResponse& resp,
         if (a.text) statusMsg = a.text;
         break;
       case NOVA_ACTION_SET_DIRTY:
-        dirty = true;
+        markBufferChanged();
         break;
       case NOVA_ACTION_ADD_HIGHLIGHT:
         if (a.highlights) {
@@ -261,6 +384,10 @@ static std::string applyResponse(NovaResponse& resp,
           g_pendingUI.type = NOVA_UI_SPLIT;
           g_pendingUI.ownerPlugin = owner;
           g_pendingUI.splitView = *a.split;
+          // Default to modal unless plugin explicitly sets modal=0.
+          // This avoids uninitialized garbage values accidentally enabling
+          // non-modal behavior.
+          g_pendingUI.splitView.modal = (g_pendingUI.splitView.modal == 0) ? 0 : 1;
           // COPIE título:
           g_pendingUI.splitTitle = a.split->title ? a.split->title : "";
           g_pendingUI.splitView.title = g_pendingUI.splitTitle.c_str();
@@ -283,37 +410,140 @@ static std::string applyResponse(NovaResponse& resp,
         break;
     }
   }
+  if (skippedMutation && statusMsg.empty() && owner) {
+    statusMsg = owner->name + ": resultado ignorado, buffer mudou";
+  }
   return statusMsg;
+}
+
+static std::string dispatchSyncEvent(LoadedPlugin& plugin, NovaEvent* event,
+                                     NovaBuffer* buffer,
+                                     std::vector<std::string>& lines,
+                                     int& curRow, int& curCol, bool& dirty,
+                                     std::vector<NovaHighlight>& highlights,
+                                     std::string& inlineText,
+                                     int& bufferRevision) {
+  NovaResponse resp;
+  {
+    std::lock_guard<std::mutex> lock(*plugin.execMutex);
+    resp = plugin.fn_on_event(event, buffer);
+  }
+  std::string msg =
+      applyResponse(resp, lines, curRow, curCol, dirty, highlights, inlineText,
+                    bufferRevision, true, &plugin);
+  plugin.fn_free_resp(&resp);
+  return msg;
+}
+
+static void startAsyncTask(LoadedPlugin& plugin,
+                           std::shared_ptr<AsyncPluginCall> call,
+                           int bufferRevision) {
+  LoadedPlugin* pluginPtr = &plugin;
+  auto execMutex = plugin.execMutex;
+  g_pluginStates[pluginPtr].running = true;
+  g_asyncTasks.push_back({pluginPtr, bufferRevision, call,
+                          std::async(std::launch::async,
+                                     [pluginPtr, execMutex, call]() {
+                                       std::lock_guard<std::mutex> lock(
+                                           *execMutex);
+                                       return pluginPtr->fn_on_event(
+                                           &call->event, &call->buffer);
+                                     })});
 }
 
 std::string pluginManagerFireEvent(NovaEvent* event, NovaBuffer* buffer,
                                    std::vector<std::string>& lines, int& curRow,
                                    int& curCol, bool& dirty,
                                    std::vector<NovaHighlight>& highlights,
-                                   std::string& inlineText) {
+                                   std::string& inlineText,
+                                   int& bufferRevision) {
   std::string lastMsg;
-  for (auto& p : g_plugins) {
-    if (event->type == NOVA_EVENT_COMMAND) {
-      bool handles = false;
-      for (auto& c : p.commands)
-        if (c == event->command) {
-          handles = true;
-          break;
-        }
-      if (!handles) continue;
+
+  if (event->type == NOVA_EVENT_UI_RESULT) {
+    LoadedPlugin* target = g_pendingUI.ownerPlugin;
+    pluginManagerClearPendingUI();
+    if (target) {
+      auto call = std::make_shared<AsyncPluginCall>(event, buffer);
+      auto& state = g_pluginStates[target];
+      if (state.running) {
+        state.queuedEvent = QueuedPluginEvent{call, bufferRevision};
+        state.droppedEvents++;
+        lastMsg = "plugin: atualizando evento pendente de UI";
+      } else {
+        startAsyncTask(*target, call, bufferRevision);
+        lastMsg = "plugin: processando resposta de UI";
+      }
     }
-    if (event->type == NOVA_EVENT_UI_RESULT) {
-      g_pendingUI.active = false;
-      g_pendingUI.type = NOVA_UI_NONE;
-      if (&p != g_pendingUI.ownerPlugin) continue;
-    }
-    NovaResponse resp = p.fn_on_event(event, buffer);
-    std::string msg = applyResponse(resp, lines, curRow, curCol, dirty,
-                                    highlights, inlineText, &p);
-    if (!msg.empty()) lastMsg = msg;
-    p.fn_free_resp(&resp);
-    // ADICIONE: UI_RESULT só vai para um plugin
-    if (event->type == NOVA_EVENT_UI_RESULT) break;
+    return lastMsg;
   }
+
+  if (!shouldDispatchAsync(*event)) {
+    for (auto& p : g_plugins) {
+      if (!eventMatchesPlugin(p, *event)) continue;
+      std::string msg =
+          dispatchSyncEvent(p, event, buffer, lines, curRow, curCol, dirty,
+                            highlights, inlineText, bufferRevision);
+      if (!msg.empty()) lastMsg = msg;
+    }
+    return lastMsg;
+  }
+
+  for (auto& p : g_plugins) {
+    if (!eventMatchesPlugin(p, *event)) continue;
+
+    auto call = std::make_shared<AsyncPluginCall>(event, buffer);
+    auto& state = g_pluginStates[&p];
+    if (state.running) {
+      state.queuedEvent = QueuedPluginEvent{call, bufferRevision};
+      state.droppedEvents++;
+      lastMsg = "plugin: " + p.name + " enfileirado (latest)";
+    } else {
+      startAsyncTask(p, call, bufferRevision);
+      lastMsg = "plugin: executando " + p.name;
+    }
+  }
+
+  return lastMsg;
+}
+
+std::string pluginManagerPoll(std::vector<std::string>& lines, int& curRow,
+                              int& curCol, bool& dirty,
+                              std::vector<NovaHighlight>& highlights,
+                              std::string& inlineText, int& bufferRevision) {
+  std::string lastMsg;
+
+  for (size_t i = 0; i < g_asyncTasks.size();) {
+    auto& task = g_asyncTasks[i];
+    if (task.future.wait_for(std::chrono::seconds(0)) !=
+        std::future_status::ready) {
+      i++;
+      continue;
+    }
+
+    NovaResponse resp = task.future.get();
+    auto& state = g_pluginStates[task.plugin];
+    state.running = false;
+    bool allowBufferMutations = (task.bufferRevision == bufferRevision);
+    std::string msg =
+        applyResponse(resp, lines, curRow, curCol, dirty, highlights,
+                      inlineText, bufferRevision, allowBufferMutations,
+                      task.plugin);
+    if (state.droppedEvents > 0 && msg.empty()) {
+      msg = task.plugin->name + ": " + std::to_string(state.droppedEvents) +
+            " evento(s) substituido(s)";
+    }
+    if (!msg.empty()) lastMsg = msg;
+    if (task.plugin && task.plugin->fn_free_resp) task.plugin->fn_free_resp(&resp);
+    if (state.queuedEvent.has_value()) {
+      auto queued = *state.queuedEvent;
+      state.queuedEvent.reset();
+      state.droppedEvents = 0;
+      startAsyncTask(*task.plugin, queued.call, queued.bufferRevision);
+    } else {
+      state.droppedEvents = 0;
+    }
+    g_asyncTasks.erase(g_asyncTasks.begin() + i);
+  }
+
   return lastMsg;
 }

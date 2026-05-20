@@ -361,6 +361,7 @@ endwin();
   int curRow = 0, curCol = 0;
   int scrollRow = 0, scrollX = 0;
   bool dirty = false;
+  int bufferRevision = 0;
   WINDOW* splitWin = nullptr;
   std::string statusMsg;
   bool statusIsError = false;
@@ -370,6 +371,7 @@ endwin();
   };
   std::vector<EcheckError> echeckErrors;
   time_t lastEcheck = 0;
+  time_t lastPluginTick = 0;
   time_t lastKeystroke = 0;
   bool pendingUndo = false;
 
@@ -390,6 +392,10 @@ endwin();
   };
   std::vector<EditorState> undoStack;
   std::vector<EditorState> redoStack;
+  auto markBufferChanged = [&]() {
+    dirty = true;
+    bufferRevision++;
+  };
 
   auto clampCursor = [&]() {
     if (curRow < 0) curRow = 0;
@@ -443,8 +449,19 @@ endwin();
     ev.uiSelectedIndex = uiSelectedIndex;
     ev.uiSelectedText = uiSelectedText;
 
-    std::string msg = pluginManagerFireEvent(
-        &ev, &buf, lines, curRow, curCol, dirty, pluginHighlights, inlineText);
+    std::string msg =
+        pluginManagerFireEvent(&ev, &buf, lines, curRow, curCol, dirty,
+                               pluginHighlights, inlineText, bufferRevision);
+    if (!msg.empty()) {
+      statusMsg = msg;
+      statusIsError = false;
+    }
+  };
+
+  auto pollPluginResponses = [&]() {
+    std::string msg =
+        pluginManagerPoll(lines, curRow, curCol, dirty, pluginHighlights,
+                          inlineText, bufferRevision);
     if (!msg.empty()) {
       statusMsg = msg;
       statusIsError = false;
@@ -469,7 +486,7 @@ endwin();
     curRow = s.curRow;
     curCol = s.curCol;
     undoStack.pop_back();
-    dirty = true;
+    markBufferChanged();
     statusMsg = "Undo";
   };
 
@@ -484,7 +501,7 @@ endwin();
     curRow = s.curRow;
     curCol = s.curCol;
     redoStack.pop_back();
-    dirty = true;
+    markBufferChanged();
     statusMsg = "Redo";
   };
 
@@ -966,6 +983,7 @@ endwin();
 
   while (true) {
     int ch = wgetch(editorWin);
+    pollPluginResponses();
     // Aplica remaps
     for (auto& r : cfg_key_remaps) {
       int remapCh = -1;
@@ -996,6 +1014,10 @@ endwin();
       if (dirty && now - lastEcheck >= cfg_time_LSP_check && shouldCheck()) {
         runEcheck();
         lastEcheck = now;
+      }
+      if (now - lastPluginTick >= 1) {
+        fireEvent(NOVA_EVENT_TICK);
+        lastPluginTick = now;
       }
       wtimeout(editorWin, 500);
       redraw();
@@ -1123,12 +1145,16 @@ endwin();
       }
 
       if (ui.type == NOVA_UI_SPLIT) {
-        // Tecla Esc ou 'q' fecha o split
-        if (ch == 27 || ch == 'q') {
-          pluginManagerClearPendingUI();
+        const bool modal = (ui.splitView.modal != 0);
+        if (modal) {
+          // Tecla Esc ou 'q' fecha o split
+          if (ch == 27 || ch == 'q') {
+            pluginManagerClearPendingUI();
+          }
+          redraw();
+          continue;  // modal: consome a tecla, nao deixa cair no editor
         }
-        redraw();
-        continue;  // ← ESSENCIAL: consome a tecla, não deixa cair no editor
+        // non-modal: nao consome teclas; o split fica visivel enquanto o usuario edita
       }
       }
 
@@ -1267,7 +1293,7 @@ endwin();
           if (curCol > 0) {
             lines[curRow].erase(curCol - 1, 1);
             curCol--;
-            dirty = true;
+            markBufferChanged();
             pendingUndo = true;
             lastKeystroke = time(nullptr);
           } else if (curRow > 0) {
@@ -1275,20 +1301,20 @@ endwin();
             lines[curRow - 1] += lines[curRow];
             lines.erase(lines.begin() + curRow);
             curRow--;
-            dirty = true;
+            markBufferChanged();
             pendingUndo = true;
             lastKeystroke = time(nullptr);
           }
         } else if (ch == KEY_DC) {
           if (curCol < (int)lines[curRow].size()) {
             lines[curRow].erase(curCol, 1);
-            dirty = true;
+            markBufferChanged();
             pendingUndo = true;
             lastKeystroke = time(nullptr);
           } else if (curRow < (int)lines.size() - 1) {
             lines[curRow] += lines[curRow + 1];
             lines.erase(lines.begin() + curRow + 1);
-            dirty = true;
+            markBufferChanged();
             pendingUndo = true;
             lastKeystroke = time(nullptr);
           }
@@ -1299,13 +1325,13 @@ endwin();
           lines.insert(lines.begin() + curRow + 1, rest);
           curRow++;
           curCol = 0;
-          dirty = true;
+          markBufferChanged();
           pendingUndo = true;
           lastKeystroke = time(nullptr);
         } else if (ch == '\t') {
           lines[curRow].insert(curCol, std::string(cfg_tab_size, ' '));
           curCol += cfg_tab_size;
-          dirty = true;
+          markBufferChanged();
           pendingUndo = true;
           lastKeystroke = time(nullptr);
         } else if (ch >= 32 && ch < 127) {
@@ -1339,7 +1365,7 @@ endwin();
             lines[curRow].insert(curCol, 1, (char)ch);
             curCol++;
           }
-          dirty = true;
+          markBufferChanged();
           statusMsg = "";
           statusIsError = false;
         }
@@ -1459,6 +1485,16 @@ endwin();
             doUndo();
           } else if (cmdLine == "redo") {
             doRedo();
+          } else if (cmdLine == "close") {
+            if (pluginManagerHasPendingUI()) {
+              fireEvent(NOVA_EVENT_UI_RESULT, 0, nullptr, nullptr,
+                        NOVA_UI_POPUP_CANCEL, -1, nullptr);
+              statusMsg = "Plugin UI closed";
+              statusIsError = false;
+            } else {
+              statusMsg = "No plugin UI open";
+              statusIsError = false;
+            }
           } else if (pluginManagerHasCommand(cmdLine)) {
             fireEvent(NOVA_EVENT_COMMAND, 0, cmdLine.c_str(), "");
             mode = Mode::Normal;
@@ -1591,7 +1627,7 @@ endwin();
             curCol = ln.size();
           }
         }
-        dirty = true;
+        markBufferChanged();
       }
       redraw();
       continue;
@@ -1616,7 +1652,7 @@ endwin();
       lines.insert(lines.begin() + curRow + 1, "");
       curRow++;
       curCol = 0;
-      dirty = true;
+      markBufferChanged();
       mode = Mode::Insert;
       cmdBuffer = "";
       redraw();
@@ -1626,7 +1662,7 @@ endwin();
       pushUndo();
       lines.insert(lines.begin() + curRow, "");
       curCol = 0;
-      dirty = true;
+      markBufferChanged();
       mode = Mode::Insert;
       cmdBuffer = "";
       redraw();
@@ -1690,7 +1726,7 @@ endwin();
       if (!lines[curRow].empty() && curCol < (int)lines[curRow].size()) {
         pushUndo();
         lines[curRow].erase(curCol, 1);
-        dirty = true;
+        markBufferChanged();
         clampCursor();
       }
       redraw();
@@ -1704,7 +1740,7 @@ endwin();
       lines.erase(lines.begin() + curRow);
       if (lines.empty()) lines.push_back("");
       clampCursor();
-      dirty = true;
+      markBufferChanged();
       cmdBuffer = "";
     } else if (cmdBuffer == "gg") {
       curRow = 0;

@@ -1,5 +1,9 @@
 #include "editor.h"
 
+#include "config.h"
+
+#include "plugin_manager.h"
+
 #ifdef _WIN32
 #include <ncurses/curses.h>
 #else
@@ -52,28 +56,27 @@ enum NcColors {
   COL_OPERATOR = 14,  // operadores → ciano escuro
 };
 
-
-
 static void initEditorColors() {
   start_color();
   use_default_colors();
 
   init_pair(COL_NORMAL, COLOR_WHITE, -1);
-  init_pair(COL_KEYWORD, COLOR_BLUE, -1);
-  init_pair(COL_TYPE, COLOR_CYAN, -1);
-  init_pair(COL_NUMBER, COLOR_YELLOW, -1);
-  init_pair(COL_STRING, COLOR_YELLOW, -1);
-  init_pair(COL_COMMENT, COLOR_BLACK, -1);
+  init_pair(COL_KEYWORD, cfg_color_keyword, -1);
+  init_pair(COL_TYPE, cfg_color_type, -1);
+  init_pair(COL_NUMBER, cfg_color_number, -1);
+  init_pair(COL_STRING, cfg_color_string, -1);
+  init_pair(COL_COMMENT, cfg_color_comment, -1);
   init_pair(COL_LINENO, COLOR_BLUE, -1);
   init_pair(COL_STATUSBAR, COLOR_WHITE, COLOR_BLUE);
   init_pair(COL_STATUSER, COLOR_WHITE, COLOR_RED);
   init_pair(COL_DIALOG, COLOR_WHITE, COLOR_BLUE);
   init_pair(COL_DIGINPUT, COLOR_WHITE, COLOR_BLACK);
-  init_pair(COL_LITERAL, COLOR_MAGENTA, -1);
-  init_pair(COL_CHAR, COLOR_GREEN, -1);
-  init_pair(COL_OPERATOR, COLOR_CYAN, -1);
+  init_pair(COL_LITERAL, cfg_color_literal, -1);
+  init_pair(COL_CHAR, cfg_color_char, -1);
+  init_pair(COL_OPERATOR, cfg_color_operator, -1);
 }
-
+std::vector<NovaHighlight> pluginHighlights;
+std::string inlineText;
 // ── Renderiza uma linha com syntax highlight
 // ──────────────────────────────────
 static void renderLine(WINDOW* win, int y, int xOff, const std::string& line,
@@ -258,7 +261,7 @@ static std::string inputDialog(const std::string& prompt,
 
   while (true) {
     int ch = wgetch(dlgWin);
-    if (ch == 27) {  // Esc — cancela
+    if (ch == 27) {  // Esc - cancela
       delwin(dlgWin);
       return "";
     }
@@ -295,25 +298,41 @@ static std::string currentDir() {
   return "";
 }
 
+
+
 // ── Editor principal
 // ──────────────────────────────────────────────────────────
 void runEditor(const std::string& editFile, const std::string& outputFileArg,
                int optLevel) {
   std::string filename = editFile;
-
-  initscr();
-  set_escdelay(10);
+  loadConfig();  // 1. carrega cfg_color_* com os valores do arquivo
+  // Load plugins
+  std::string pluginDir;
+  const char* stdlibPath = getenv("NOVA_STDLIB_PATH");
+  if (stdlibPath) pluginDir = std::string(stdlibPath) + "/plugins";
+#ifdef _WIN32
+  else
+    pluginDir = std::string(getenv("USERPROFILE")) + "/.local/lib/nova/plugins";
+#else
+  else
+    pluginDir = "/usr/local/lib/nova/plugins";
+#endif
+  fprintf(stderr, "plugin dir: %s\n", pluginDir.c_str());
+  pluginManagerInit(pluginDir);
+  initscr();     // 2. inicia ncurses
+  set_escdelay(0);
   raw();
   keypad(stdscr, TRUE);
   noecho();
-  curs_set(1);
-  initEditorColors();
+  curs_set(0);
+  initEditorColors();  // 3. usa cfg_color_* já carregados
 
   if (filename.empty()) {
     std::string preset = currentDir() + "untitled.npp";
     std::string result = inputDialog(" Save as ", preset);
     if (result.empty()) {
-      endwin();
+      pluginManagerShutdown();
+endwin();
       return;
     }
     filename = result;
@@ -342,6 +361,7 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
   int curRow = 0, curCol = 0;
   int scrollRow = 0, scrollX = 0;
   bool dirty = false;
+  WINDOW* splitWin = nullptr;
   std::string statusMsg;
   bool statusIsError = false;
   struct EcheckError {
@@ -350,9 +370,11 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
   };
   std::vector<EcheckError> echeckErrors;
   time_t lastEcheck = 0;
+  time_t lastKeystroke = 0;
+  bool pendingUndo = false;
 
   // ── Modo Vim ──────────────────────────────────────────────────────
-  enum class Mode { Normal, Insert, Command, Visual, VisualLine };
+  enum class Mode { Normal, Insert, Command, Visual, VisualLine, Search };
   Mode mode = Mode::Normal;
   std::string cmdBuffer;  // acumula teclas em normal (ex: "dd", "gg")
   std::string cmdLine;    // acumula linha de comando (:w, :q, :wq)
@@ -360,6 +382,14 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
   // ── Visual mode ───────────────────────────────────────────────
   int selAnchorRow = 0, selAnchorCol = 0;
   std::string yankBuffer;  // buffer interno de cópia
+
+  // Undo/redo
+  struct EditorState {
+    std::vector<std::string> lines;
+    int curRow, curCol;
+  };
+  std::vector<EditorState> undoStack;
+  std::vector<EditorState> redoStack;
 
   auto clampCursor = [&]() {
     if (curRow < 0) curRow = 0;
@@ -387,6 +417,75 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
     while (curCol > 0 &&
            (std::isalnum((unsigned char)l[curCol - 1]) || l[curCol - 1] == '_'))
       curCol--;
+  };
+  auto fireEvent = [&](NovaEventType type, int key = 0,
+                       const char* cmd = nullptr, const char* args = nullptr,
+                       int uiResultType = 0, int uiSelectedIndex = 0,
+                       const char* uiSelectedText = nullptr) {
+    std::vector<char*> rawLines(lines.size());
+    for (size_t i = 0; i < lines.size(); i++)
+      rawLines[i] = const_cast<char*>(lines[i].c_str());
+
+    NovaBuffer buf;
+    buf.lines = rawLines.data();
+    buf.lineCount = (int)lines.size();
+    buf.curRow = curRow;
+    buf.curCol = curCol;
+    buf.filename = filename.c_str();
+    buf.dirty = dirty ? 1 : 0;
+
+    NovaEvent ev;
+    ev.type = type;
+    ev.key = key;
+    ev.command = cmd;
+    ev.commandArgs = args;
+    ev.uiResultType = uiResultType;
+    ev.uiSelectedIndex = uiSelectedIndex;
+    ev.uiSelectedText = uiSelectedText;
+
+    std::string msg = pluginManagerFireEvent(
+        &ev, &buf, lines, curRow, curCol, dirty, pluginHighlights, inlineText);
+    if (!msg.empty()) {
+      statusMsg = msg;
+      statusIsError = false;
+    }
+  };
+
+  auto pushUndo = [&]() {
+    undoStack.push_back({lines, curRow, curCol});
+    redoStack.clear();           // nova ação cancela o redo
+    if (undoStack.size() > 100)  // limite de 100 estados
+      undoStack.erase(undoStack.begin());
+  };
+
+  auto doUndo = [&]() {
+    if (undoStack.empty()) {
+      statusMsg = "Nothing to undo";
+      return;
+    }
+    redoStack.push_back({lines, curRow, curCol});
+    auto& s = undoStack.back();
+    lines = s.lines;
+    curRow = s.curRow;
+    curCol = s.curCol;
+    undoStack.pop_back();
+    dirty = true;
+    statusMsg = "Undo";
+  };
+
+  auto doRedo = [&]() {
+    if (redoStack.empty()) {
+      statusMsg = "Nothing to redo";
+      return;
+    }
+    undoStack.push_back({lines, curRow, curCol});
+    auto& s = redoStack.back();
+    lines = s.lines;
+    curRow = s.curRow;
+    curCol = s.curCol;
+    redoStack.pop_back();
+    dirty = true;
+    statusMsg = "Redo";
   };
 
   auto yankToClipboard = [&](const std::string& text) {
@@ -434,7 +533,10 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
     out += lines[r2].substr(0, c2 + 1);
     return out;
   };
-
+  // search
+  std::string searchQuery;
+  std::vector<std::pair<int, int>> searchMatches;  // {row, col}
+  int searchIndex = 0;
   // ── Redraw ────────────────────────────────────────────────────────
   auto redraw = [&]() {
     getmaxyx(stdscr, maxy, maxx);
@@ -458,7 +560,7 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
     bool lineHasError = false;
     for (auto& e : echeckErrors) {
       if (e.line == curRow + 1) {
-        right = "  ⚠ " + e.msg;
+        right = "  ! " + e.msg;
         lineHasError = true;
         break;
       }
@@ -470,8 +572,9 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
                           : (mode == Mode::Command)    ? " COMMAND "
                           : (mode == Mode::Visual)     ? " VISUAL "
                           : (mode == Mode::VisualLine) ? " V-LINE "
+                          : (mode == Mode::Search)     ? " SEARCH "
                                                        : " NORMAL ";
-    std::string left = modeStr + (dirty ? "● " : "  ") + filename;
+    std::string left = modeStr + (dirty ? "* " : "  ") + filename;
     int spaces = maxx - (int)left.size() - (int)right.size();
     if (spaces < 1) spaces = 1;
     std::string bar = left + std::string(spaces, ' ') + right;
@@ -485,7 +588,7 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
     for (int r = 0; r < editorH; r++) {
       int lineIdx = scrollRow + r;
       if (lineIdx < (int)lines.size()) {
-        // Número da linha — vermelho se tiver erro
+        // Número da linha - vermelho se tiver erro
         bool hasErr = false;
         for (auto& e : echeckErrors)
           if (e.line == lineIdx + 1) {
@@ -549,7 +652,57 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
             if (hw > 0) mvwchgat(editorWin, r, hx, hw, A_REVERSE, 0, NULL);
           }
         }
-
+        if (mode == Mode::Search || !searchQuery.empty()) {
+          size_t pos = 0;
+          while ((pos = lines[lineIdx].find(searchQuery, pos)) !=
+                 std::string::npos) {
+            int hx = LINENO_WIDTH + (int)pos - scrollX;
+            int hw = (int)searchQuery.size();
+            if (hx < LINENO_WIDTH) {
+              hw -= (LINENO_WIDTH - hx);
+              hx = LINENO_WIDTH;
+            }
+            if (hw > 0 && hx < getmaxx(editorWin))
+              mvwchgat(editorWin, r, hx, hw, A_REVERSE, COL_NUMBER, NULL);
+            pos++;
+          }
+        }
+        // Plugin highlights
+        for (auto& h : pluginHighlights) {
+          if (h.row == lineIdx) {
+            int hx = LINENO_WIDTH + h.colStart - scrollX;
+            int hw = h.colEnd - h.colStart;
+            if (hx < LINENO_WIDTH) {
+              hw -= (LINENO_WIDTH - hx);
+              hx = LINENO_WIDTH;
+            }
+            if (hw > 0 && hx < getmaxx(editorWin)) {
+              int pair =
+                  (h.style.fg != NOVA_COLOR_NONE ||
+                   h.style.bg != NOVA_COLOR_NONE)
+                      ? [&]() {
+                          // register color pair on the fly
+                          static std::map<std::pair<int, int>, int> cache;
+                          static int next = 30;
+                          auto key = std::make_pair(h.style.fg, h.style.bg);
+                          auto it = cache.find(key);
+                          if (it != cache.end()) return it->second;
+                          int p = next++;
+                          init_pair(
+                              p,
+                              h.style.fg == NOVA_COLOR_NONE ? -1 : h.style.fg,
+                              h.style.bg == NOVA_COLOR_NONE ? -1 : h.style.bg);
+                          cache[key] = p;
+                          return p;
+                        }()
+                      : 0;
+              int attr = COLOR_PAIR(pair);
+              if (h.style.bold) attr |= A_BOLD;
+              if (h.style.underline) attr |= A_UNDERLINE;
+              mvwchgat(editorWin, r, hx, hw, attr, pair, NULL);
+            }
+          }
+        }
         // Sublinha a coluna do erro
         for (auto& e : echeckErrors) {
           if (e.line == lineIdx + 1) {
@@ -580,6 +733,50 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
       mvwaddch(editorWin, cursorY, cursorX, charUnder | A_UNDERLINE | A_BOLD);
 
     wmove(editorWin, cursorY, cursorX);
+    // Split view from plugin
+    // Split view from plugin
+    if (pluginManagerHasPendingUI() && g_pendingUI.type == NOVA_UI_SPLIT) {
+      auto& sv = g_pendingUI;
+      int splitSize =
+          sv.splitView.size > 0 ? sv.splitView.size : maxx * 30 / 100;
+      int splitPos = sv.splitView.position;
+
+      if (!splitWin) {
+        if (splitPos == NOVA_SPLIT_RIGHT)
+          splitWin = newwin(maxy - 2, splitSize, 1, maxx - splitSize);
+        else if (splitPos == NOVA_SPLIT_LEFT)
+          splitWin = newwin(maxy - 2, splitSize, 1, 0);
+        else
+          splitWin = newwin(splitSize, maxx, maxy - 1 - splitSize, 0);
+      }
+
+      if (splitWin) {
+        werase(splitWin);
+        wattron(splitWin, COLOR_PAIR(COL_DIALOG) | A_BOLD);
+        box(splitWin, 0, 0);
+        if (sv.splitView.title) mvwaddstr(splitWin, 0, 2, sv.splitView.title);
+        wattroff(splitWin, COLOR_PAIR(COL_DIALOG) | A_BOLD);
+        int h = getmaxy(splitWin) - 2;
+        int w = getmaxx(splitWin) - 4;
+        for (int j = 0; j < h && j < (int)sv.splitLines.size(); j++)
+          mvwaddnstr(splitWin, j + 1, 2, sv.splitLines[j].c_str(), w);
+        wrefresh(splitWin);
+      }
+    } else if (splitWin) {
+      delwin(splitWin);
+      splitWin = nullptr;
+    }
+
+    // Ajusta largura do editorWin se split estiver aberto
+    if (splitWin) {
+      int splitSize = g_pendingUI.splitView.size > 0
+                          ? g_pendingUI.splitView.size
+                          : maxx * 30 / 100;
+      wresize(editorWin, maxy - 2, maxx - splitSize);
+    } else {
+      wresize(editorWin, maxy - 2, maxx);
+    }
+
     wrefresh(editorWin);
 
     // ── Footer ────────────────────────────────────────────────────
@@ -594,11 +791,15 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
       left2 = "  i insert   Esc normal mode";
     } else if (mode == Mode::Visual || mode == Mode::VisualLine) {
       left2 = "  y yank   Esc cancel";
-    } else {
-      left2 =
-          "  i/a insert   o new line   dd del line   w/b word   gg/G top/bot   "
-          ":w :q :wq";
     }
+    else if (mode == Mode::Search) {
+    left2 = "  /" + searchQuery + "   j next   k prev   Esc exit search";
+  }
+  else {
+    left2 =
+        "  i/a insert   o new line   dd del line   w/b word   gg/G top/bot   "
+        ":w :q :wq";
+  }
     right2 = std::string(pos);
     int fspaces = maxx - (int)left2.size() - (int)right2.size();
     if (fspaces < 0) fspaces = 0;
@@ -608,12 +809,48 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
     wattroff(footerWin, A_REVERSE | A_BOLD);
     wrefresh(footerWin);
   };
+  auto getExtension = [&]() -> std::string {
+    size_t dot = filename.rfind('.');
+    if (dot == std::string::npos) return "";
+    return filename.substr(dot);
+  };
 
+  auto shouldCheck = [&]() -> bool {
+    std::string ext = getExtension();
+    for (auto& e : cfg_check_extensions)
+      if (e == ext) return true;
+    return false;
+  };
+  auto shouldCompile = [&]() -> bool {
+    std::string ext = getExtension();
+    for (auto& e : cfg_compile_extensions)
+      if (e == ext) return true;
+    return false;
+  };
+  auto updateSearch = [&]() {
+    searchMatches.clear();
+    if (searchQuery.empty()) return;
+    for (int r = 0; r < (int)lines.size(); r++) {
+      size_t pos = 0;
+      while ((pos = lines[r].find(searchQuery, pos)) != std::string::npos) {
+        searchMatches.push_back({r, (int)pos});
+        pos++;
+      }
+    }
+  };
+
+  auto jumpToMatch = [&](int idx) {
+    if (searchMatches.empty()) return;
+    searchIndex = ((idx % (int)searchMatches.size()) + searchMatches.size()) %
+                  searchMatches.size();
+    curRow = searchMatches[searchIndex].first;
+    curCol = searchMatches[searchIndex].second;
+  };
   // ── Save ──────────────────────────────────────────────────────────
   auto saveFile = [&]() -> bool {
     std::ofstream f(filename);
-    if (!f) {
-      statusMsg = "Error: could not save " + filename;
+    if (!f.is_open()) {
+      statusMsg = "Error: cannot save '" + filename + "' - check permissions";
       statusIsError = true;
       return false;
     }
@@ -621,51 +858,78 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
       f << lines[i];
       if (i + 1 < lines.size()) f << "\n";
     }
+    f.flush();
+    if (f.fail()) {
+      statusMsg =
+          "Error: failed to write '" + filename + "' - check permissions";
+      statusIsError = true;
+      return false;
+    }
+    f.close();
+    if (f.fail()) {
+      statusMsg = "Error: failed to close '" + filename + "' - disk full?";
+      statusIsError = true;
+      return false;
+    }
     dirty = false;
+    statusMsg = "Saved";
+    statusIsError = false;
+    fireEvent(NOVA_EVENT_SAVE);
     return true;
   };
 
   // ── Save & Compile ────────────────────────────────────────────────
   auto saveAndCompile = [&]() -> bool {
     if (!saveFile()) return false;
-    endwin();
-    int ret = compileFile({filename}, outputFileArg, optLevel);
+    if (!shouldCompile() || cfg_compile_arg.empty()) {
+      return true;  // só salvou
+    }
+    fireEvent(NOVA_EVENT_SAVE);
+    // Substitui $FILE pelo nome do arquivo
+    std::string cmd = cfg_compile_arg;
+    size_t pos = cmd.find("$FILE");
+    if (pos != std::string::npos) cmd.replace(pos, 5, filename);
+
+    pluginManagerShutdown();
+endwin();
+    int ret = system(cmd.c_str());
     initscr();
     raw();
     keypad(stdscr, TRUE);
     noecho();
+    set_escdelay(25);
     curs_set(0);
     initEditorColors();
     if (ret == 0) {
       statusMsg = "Compiled OK";
       statusIsError = false;
     } else {
-      statusMsg = "Compile error — check output above";
+      statusMsg = "Compile error - check output above";
       statusIsError = true;
     }
     return ret == 0;
   };
 
   redraw();
-
+  
   auto runEcheck = [&]() {
-    statusMsg = "checking...";
     redraw();
 
     // No MinGW/Windows, usa TEMP do sistema
+    
+
+#ifdef _WIN32
     const char* tmpEnv = getenv("TEMP");
     if (!tmpEnv) tmpEnv = getenv("TMP");
     if (!tmpEnv) tmpEnv = "C:\\Temp";
     std::string tmpDir = tmpEnv;
-
     std::string pid = std::to_string(getpid());
     std::string tmpFile = tmpDir + "\\nova_echeck_" + pid + ".npp";
     std::string tmpOut = tmpDir + "\\nova_echeck_out_" + pid + ".txt";
-
-#ifdef _WIN32
     std::string cmd =
         "n++.exe --echeck \"" + tmpFile + "\" > \"" + tmpOut + "\" 2>nul";
 #else
+    std::string pid = std::to_string(getpid());
     std::string tmpFile = "/tmp/nova_echeck_" + pid + ".npp";
     std::string tmpOut = "/tmp/nova_echeck_out_" + pid + ".txt";
     std::string cmd =
@@ -702,192 +966,204 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
 
   while (true) {
     int ch = wgetch(editorWin);
+    // Aplica remaps
+    for (auto& r : cfg_key_remaps) {
+      int remapCh = -1;
+      // ctrl+letra
+      if (r.from.size() == 6 && r.from.substr(0, 5) == "ctrl+")
+        remapCh = r.from[5] & 0x1f;
+      else if (r.from == "tab")
+        remapCh = '\t';
+      else if (r.from == "enter")
+        remapCh = '\n';
+      else if (r.from == "backspace")
+        remapCh = KEY_BACKSPACE;
+      if (ch == remapCh && remapCh != -1) {
+        // injeta o target como sequência de teclas no cmdBuffer
+        // ou executa diretamente se for comando simples
+        if (r.to.size() >= 1) {
+          cmdBuffer = r.to;
+        }
+        break;
+      }
+    }
     if (ch == ERR) {
       time_t now = time(nullptr);
-      if (dirty && now - lastEcheck >= 1) {
+      if (pendingUndo && now - lastKeystroke >= 2) {
+        pushUndo();
+        pendingUndo = false;
+      }
+      if (dirty && now - lastEcheck >= cfg_time_LSP_check && shouldCheck()) {
         runEcheck();
         lastEcheck = now;
       }
+      wtimeout(editorWin, 500);
       redraw();
-      continue;
+      if (!pluginManagerHasPendingUI() || g_pendingUI.type == NOVA_UI_SPLIT)
+        continue;
+      // Tem popup/confirm/input pendente — cai no bloco abaixo sem continue
     }
     clampCursor();
     int lineLen = (int)lines[curRow].size();
+    // ── Plugin UI ─────────────────────────────────────────────────────
+    if (pluginManagerHasPendingUI()) {
+      auto& ui = pluginManagerGetPendingUI();
 
-    // ── Ctrl sempre funciona independente do modo ─────────────────
-    if (ch == ('s' & 0x1f)) {
-      saveAndCompile();
-      runEcheck();
-      redraw();
-      continue;
-    }
-    if (ch == ('x' & 0x1f)) {
-      saveAndCompile();
-      endwin();
-      return;
-    }
-    if (ch == ('q' & 0x1f)) {
-      endwin();
-      return;
-    }
-    if (ch == ('r' & 0x1f)) {
-      std::string newName = inputDialog(" Save as ", filename);
-      if (!newName.empty()) {
-        filename = newName;
-        dirty = true;
-        statusMsg = "Path changed — ^S to save";
-        statusIsError = false;
-      }
-      redraw();
-      continue;
-    }
+      if (ui.type == NOVA_UI_POPUP) {
+        int dw = ui.popup.width > 0 ? ui.popup.width : 40;
+        int dh = ui.popup.height > 0
+                     ? ui.popup.height
+                     : std::min((int)ui.items.size() + 4, maxy - 4);
+        int dy = ui.popup.row >= 0 ? ui.popup.row : maxy / 2 - dh / 2;
+        int dx = ui.popup.col >= 0 ? ui.popup.col : maxx / 2 - dw / 2;
 
-    // ── Setas sempre funcionam ────────────────────────────────────
-    if (ch == KEY_UP) {
-      if (curRow > 0) {
-        curRow--;
-        clampCursor();
-      }
-      redraw();
-      continue;
-    }
-    if (ch == KEY_DOWN) {
-      if (curRow < (int)lines.size() - 1) {
-        curRow++;
-        clampCursor();
-      }
-      redraw();
-      continue;
-    }
-    if (ch == KEY_LEFT) {
-      if (curCol > 0)
-        curCol--;
-      else if (curRow > 0) {
-        curRow--;
-        curCol = (int)lines[curRow].size();
-      }
-      redraw();
-      continue;
-    }
-    if (ch == KEY_RIGHT) {
-      if (curCol < lineLen)
-        curCol++;
-      else if (curRow < (int)lines.size() - 1) {
-        curRow++;
-        curCol = 0;
-      }
-      redraw();
-      continue;
-    }
-    if (ch == KEY_HOME) {
-      curCol = 0;
-      redraw();
-      continue;
-    }
-    if (ch == KEY_END) {
-      curCol = lineLen;
-      redraw();
-      continue;
-    }
-    if (ch == KEY_PPAGE) {
-      curRow = std::max(0, curRow - (maxy - 2));
-      clampCursor();
-      redraw();
-      continue;
-    }
-    if (ch == KEY_NPAGE) {
-      curRow = std::min((int)lines.size() - 1, curRow + (maxy - 2));
-      clampCursor();
-      redraw();
-      continue;
-    }
+        WINDOW* pop = newwin(dh, dw, dy, dx);
+        keypad(pop, TRUE);
 
-    // ══════════════════════════════════════════════════════════════
-    // MODO INSERT
-    // ══════════════════════════════════════════════════════════════
-    if (mode == Mode::Insert) {
-      if (ch == 27) {  // Esc → Normal
-        mode = Mode::Normal;
-        if (curCol > 0) curCol--;
-        clampCursor();
-      } else if (ch == KEY_BACKSPACE || ch == 127) {
-        if (curCol > 0) {
-          lines[curRow].erase(curCol - 1, 1);
-          curCol--;
-          dirty = true;
-        } else if (curRow > 0) {
-          curCol = (int)lines[curRow - 1].size();
-          lines[curRow - 1] += lines[curRow];
-          lines.erase(lines.begin() + curRow);
-          curRow--;
-          dirty = true;
-        }
-      } else if (ch == KEY_DC) {
-        if (curCol < (int)lines[curRow].size()) {
-          lines[curRow].erase(curCol, 1);
-          dirty = true;
-        } else if (curRow < (int)lines.size() - 1) {
-          lines[curRow] += lines[curRow + 1];
-          lines.erase(lines.begin() + curRow + 1);
-          dirty = true;
-        }
-      } else if (ch == '\n' || ch == KEY_ENTER) {
-        std::string rest = lines[curRow].substr(curCol);
-        lines[curRow] = lines[curRow].substr(0, curCol);
-        lines.insert(lines.begin() + curRow + 1, rest);
-        curRow++;
-        curCol = 0;
-        dirty = true;
-      } else if (ch == '\t') {
-        lines[curRow].insert(curCol, "    ");
-        curCol += 4;
-        dirty = true;
-      } else if (ch >= 32 && ch < 127) {
-        lines[curRow].insert(curCol, 1, (char)ch);
-        curCol++;
-        dirty = true;
-        statusMsg = "";
-        statusIsError = false;
-      }
-      if (dirty) {
-        time_t now = time(nullptr);
-        if (now - lastEcheck >= 1) {
-          runEcheck();
-          lastEcheck = now;
-        }
-      }
-      redraw();
-      continue;
-    }
-    // ══════════════════════════════════════════════════════════════
-    // MODO VISUAL / VISUAL LINE
-    // ══════════════════════════════════════════════════════════════
-    if (mode == Mode::Visual || mode == Mode::VisualLine) {
-      if (ch == 27) {  // Esc — cancela
-        mode = Mode::Normal;
-        redraw();
-        continue;
-      }
-      // Navegação hjkl e setas estendem a seleção
-      if (ch == 'h' || ch == KEY_LEFT) {
-        if (curCol > 0) curCol--;
-        redraw();
-        continue;
-      }
-      if (ch == 'l' || ch == KEY_RIGHT) {
-        if (curCol < (int)lines[curRow].size() - 1) curCol++;
-        redraw();
-        continue;
-      }
-      if (ch == 'j' || ch == KEY_DOWN) {
-        if (curRow < (int)lines.size() - 1) {
-          curRow++;
-          clampCursor();
+        auto drawPopup = [&]() {
+          werase(pop);
+          wattron(pop, COLOR_PAIR(COL_DIALOG) | A_BOLD);
+          box(pop, 0, 0);
+          if (ui.popup.title) {
+            std::string t = std::string(" ") + ui.popup.title + " ";
+            mvwaddstr(pop, 0, (dw - (int)t.size()) / 2, t.c_str());
+          }
+          wattroff(pop, COLOR_PAIR(COL_DIALOG) | A_BOLD);
+
+          int listH = dh - 4;
+          int scroll = 0;
+          if (ui.selectedIndex >= scroll + listH)
+            scroll = ui.selectedIndex - listH + 1;
+          if (ui.selectedIndex < scroll) scroll = ui.selectedIndex;
+
+          for (int j = 0; j < listH && j + scroll < (int)ui.items.size(); j++) {
+            int idx = j + scroll;
+            bool sel = (idx == ui.selectedIndex);
+            if (sel) wattron(pop, A_REVERSE | A_BOLD);
+            mvwaddnstr(pop, j + 2, 2, ui.items[idx].c_str(), dw - 4);
+            if (sel) wattroff(pop, A_REVERSE | A_BOLD);
+          }
+          mvwaddstr(pop, dh - 2, 2, "j/k select   Enter confirm   Esc cancel");
+          wrefresh(pop);
+        };
+
+        drawPopup();
+
+        // ── loop interno do popup ──
+        while (true) {
+          int pch = wgetch(pop);
+          if (pch == 'j' || pch == KEY_DOWN) {
+            if (ui.selectedIndex < (int)ui.items.size() - 1) ui.selectedIndex++;
+            drawPopup();
+          } else if (pch == 'k' || pch == KEY_UP) {
+            if (ui.selectedIndex > 0) ui.selectedIndex--;
+            drawPopup();
+          } else if (pch == '\n' || pch == KEY_ENTER) {
+            std::string sel = ui.items[ui.selectedIndex];
+            int selIdx = ui.selectedIndex;
+            delwin(pop);
+            fireEvent(NOVA_EVENT_UI_RESULT, 0, nullptr, nullptr,
+                      NOVA_UI_POPUP_SELECT, selIdx, sel.c_str());
+            break;
+          
+          } else if (pch == 27) {
+            delwin(pop);
+            fireEvent(NOVA_EVENT_UI_RESULT, 0, nullptr, nullptr,
+                      NOVA_UI_POPUP_CANCEL, -1, nullptr);
+            break;  // ← só isso, sem o ClearPendingUI
+          
+          }
         }
         redraw();
         continue;
       }
-      if (ch == 'k' || ch == KEY_UP) {
+
+      if (ui.type == NOVA_UI_INPUT) {
+        std::string result =
+            inputDialog(ui.inputDialog.title ? ui.inputDialog.title : "Input",
+                        ui.inputText);
+        int uiType =
+            result.empty() ? NOVA_UI_INPUT_CANCEL : NOVA_UI_INPUT_CONFIRM;
+        pluginManagerClearPendingUI();
+        fireEvent(NOVA_EVENT_UI_RESULT, 0, nullptr, nullptr, uiType, 0,
+                  result.c_str());
+        redraw();
+        continue;
+      }
+
+      if (ui.type == NOVA_UI_CONFIRM) {
+        // Simple confirm dialog
+        int dw = 44, dh = 6;
+        int dy = maxy / 2 - dh / 2, dx = maxx / 2 - dw / 2;
+        WINDOW* cwin = newwin(dh, dw, dy, dx);
+        keypad(cwin, TRUE);
+        wattron(cwin, COLOR_PAIR(COL_DIALOG) | A_BOLD);
+        box(cwin, 0, 0);
+        if (ui.confirmDialog.title)
+          mvwaddstr(cwin, 0, 2, ui.confirmDialog.title);
+        wattroff(cwin, COLOR_PAIR(COL_DIALOG) | A_BOLD);
+        if (ui.confirmDialog.message)
+          mvwaddnstr(cwin, 2, 2, ui.confirmDialog.message, dw - 4);
+        const char* yes = ui.confirmDialog.confirmLabel
+                              ? ui.confirmDialog.confirmLabel
+                              : "Yes";
+        const char* no =
+            ui.confirmDialog.cancelLabel ? ui.confirmDialog.cancelLabel : "No";
+        mvwprintw(cwin, dh - 2, 2, "y = %s   n = %s", yes, no);
+        wrefresh(cwin);
+        int cch = wgetch(cwin);
+        int uiType = (cch == 'y' || cch == 'Y') ? NOVA_UI_CONFIRM_YES
+                                                : NOVA_UI_CONFIRM_NO;
+        delwin(cwin);
+        fireEvent(NOVA_EVENT_UI_RESULT, 0, nullptr, nullptr, uiType, 0,
+                  nullptr);
+        pluginManagerClearPendingUI();
+        redraw();
+        continue;
+      }
+
+      if (ui.type == NOVA_UI_SPLIT) {
+        // Tecla Esc ou 'q' fecha o split
+        if (ch == 27 || ch == 'q') {
+          pluginManagerClearPendingUI();
+        }
+        redraw();
+        continue;  // ← ESSENCIAL: consome a tecla, não deixa cair no editor
+      }
+      }
+
+      // ── Ctrl sempre funciona independente do modo ─────────────────
+      if (ch == ('s' & 0x1f)) {
+        saveAndCompile();
+        runEcheck();
+        redraw();
+        continue;
+      }
+      if (ch == ('x' & 0x1f)) {
+        saveAndCompile();
+        pluginManagerShutdown();
+        endwin();
+        return;
+      }
+      if (ch == ('q' & 0x1f)) {
+        pluginManagerShutdown();
+        endwin();
+        return;
+      }
+      if (ch == ('r' & 0x1f)) {
+        std::string newName = inputDialog(" Save as ", filename);
+        if (!newName.empty()) {
+          filename = newName;
+          dirty = true;
+          statusMsg = "Path changed - ^S to save";
+          statusIsError = false;
+        }
+        redraw();
+        continue;
+      }
+
+      // ── Setas sempre funcionam ────────────────────────────────────
+      if (ch == KEY_UP) {
         if (curRow > 0) {
           curRow--;
           clampCursor();
@@ -895,124 +1171,435 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
         redraw();
         continue;
       }
-      if (ch == 'w') {
-        wordForward();
-        clampCursor();
+      if (ch == KEY_DOWN) {
+        if (curRow < (int)lines.size() - 1) {
+          curRow++;
+          clampCursor();
+        }
         redraw();
         continue;
       }
-      if (ch == 'b') {
-        wordBack();
-        clampCursor();
+      if (ch == KEY_LEFT) {
+        if (curCol > 0)
+          curCol--;
+        else if (curRow > 0) {
+          curRow--;
+          curCol = (int)lines[curRow].size();
+        }
         redraw();
         continue;
       }
-      if (ch == '0') {
+      if (ch == KEY_RIGHT) {
+        if (curCol < lineLen)
+          curCol++;
+        else if (curRow < (int)lines.size() - 1) {
+          curRow++;
+          curCol = 0;
+        }
+        redraw();
+        continue;
+      }
+      if (ch == KEY_HOME) {
         curCol = 0;
         redraw();
         continue;
       }
-      if (ch == '$') {
-        curCol = std::max(0, (int)lines[curRow].size() - 1);
+      if (ch == KEY_END) {
+        curCol = lineLen;
         redraw();
         continue;
       }
-      if (ch == 'G') {
-        curRow = (int)lines.size() - 1;
+      if (ch == KEY_PPAGE) {
+        curRow = std::max(0, curRow - (maxy - 2));
         clampCursor();
         redraw();
         continue;
       }
-      if (ch == 'y') {  // yank
-        std::string sel = getSelection();
-        yankToClipboard(sel);
-        statusMsg = "yanked " +
-                    std::to_string(std::abs(curRow - selAnchorRow) + 1) +
-                    " line(s)";
-        mode = Mode::Normal;
+      if (ch == KEY_NPAGE) {
+        curRow = std::min((int)lines.size() - 1, curRow + (maxy - 2));
+        clampCursor();
         redraw();
         continue;
       }
-      redraw();
-      continue;
-    }
-    // ══════════════════════════════════════════════════════════════
-    // MODO COMMAND (:)
-    // ══════════════════════════════════════════════════════════════
-    if (mode == Mode::Command) {
-      if (ch == 27) {
-        mode = Mode::Normal;
-        cmdLine = "";
-      } else if (ch == '\n' || ch == KEY_ENTER) {
-        if (cmdLine == "w") {
-          saveFile();
-          statusMsg = "Saved";
+      // ══════════════════════════════════════════════════════════════
+      // MODO SEARCH
+      // ══════════════════════════════════════════════════════════════
+      if (mode == Mode::Search) {
+        if (ch == 27) {  // Esc - sai da busca mas mantém highlights
+          mode = Mode::Normal;
+        } else if (ch == '\n' || ch == KEY_ENTER) {
+          mode = Mode::Normal;
+          jumpToMatch(searchIndex);
+        } else if (ch == KEY_BACKSPACE || ch == 127) {
+          if (!searchQuery.empty()) {
+            searchQuery.pop_back();
+            updateSearch();
+            jumpToMatch(searchIndex);
+          } else {
+            mode = Mode::Normal;
+            searchMatches.clear();
+          }
+        } else if (ch == 'j' || ch == KEY_DOWN) {
+          jumpToMatch(searchIndex + 1);
+        } else if (ch == 'k' || ch == KEY_UP) {
+          jumpToMatch(searchIndex - 1);
+        } else if (ch >= 32 && ch < 127) {
+          searchQuery += (char)ch;
+          updateSearch();
+          jumpToMatch(0);
+        }
+        redraw();
+        continue;
+      }
+      // ══════════════════════════════════════════════════════════════
+      // MODO INSERT
+      // ══════════════════════════════════════════════════════════════
+      if (mode == Mode::Insert) {
+        if (ch == 27) {  // Esc -> Normal
+          if (pendingUndo) {
+            pushUndo();
+            pendingUndo = false;
+          }
+          mode = Mode::Normal;
+          if (curCol > 0) curCol--;
+          clampCursor();
+        } else if (ch == KEY_BACKSPACE || ch == 127) {
+          if (curCol > 0) {
+            lines[curRow].erase(curCol - 1, 1);
+            curCol--;
+            dirty = true;
+            pendingUndo = true;
+            lastKeystroke = time(nullptr);
+          } else if (curRow > 0) {
+            curCol = (int)lines[curRow - 1].size();
+            lines[curRow - 1] += lines[curRow];
+            lines.erase(lines.begin() + curRow);
+            curRow--;
+            dirty = true;
+            pendingUndo = true;
+            lastKeystroke = time(nullptr);
+          }
+        } else if (ch == KEY_DC) {
+          if (curCol < (int)lines[curRow].size()) {
+            lines[curRow].erase(curCol, 1);
+            dirty = true;
+            pendingUndo = true;
+            lastKeystroke = time(nullptr);
+          } else if (curRow < (int)lines.size() - 1) {
+            lines[curRow] += lines[curRow + 1];
+            lines.erase(lines.begin() + curRow + 1);
+            dirty = true;
+            pendingUndo = true;
+            lastKeystroke = time(nullptr);
+          }
+        } else if (ch == '\n' || ch == KEY_ENTER) {
+          std::string rest =
+              lines[curRow].substr(curCol);  // salva o resto ANTES de truncar
+          lines[curRow] = lines[curRow].substr(0, curCol);
+          lines.insert(lines.begin() + curRow + 1, rest);
+          curRow++;
+          curCol = 0;
+          dirty = true;
+          pendingUndo = true;
+          lastKeystroke = time(nullptr);
+        } else if (ch == '\t') {
+          lines[curRow].insert(curCol, std::string(cfg_tab_size, ' '));
+          curCol += cfg_tab_size;
+          dirty = true;
+          pendingUndo = true;
+          lastKeystroke = time(nullptr);
+        } else if (ch >= 32 && ch < 127) {
+          pushUndo();
+          // Auto-close
+          static const std::string opens = "\"'({[";
+          static const std::string closes = "\"')}]";
+          size_t pairIdx = opens.find((char)ch);
+          if (pairIdx != std::string::npos) {
+            char closeChar = closes[pairIdx];
+            if (ch == '"' || ch == '\'') {
+              // Se já está sobre o mesmo char, só avança (skip closing)
+              if (curCol < (int)lines[curRow].size() &&
+                  lines[curRow][curCol] == (char)ch) {
+                curCol++;
+                redraw();
+                continue;
+              }
+            }
+            lines[curRow].insert(curCol, 2, ' ');
+            lines[curRow][curCol] = (char)ch;
+            lines[curRow][curCol + 1] = closeChar;
+            curCol++;
+          } else if ((ch == ')' || ch == '}' || ch == ']' || ch == '"' ||
+                      ch == '\'') &&
+                     curCol < (int)lines[curRow].size() &&
+                     lines[curRow][curCol] == (char)ch) {
+            // Skip se o próximo char já é o closing
+            curCol++;
+          } else {
+            lines[curRow].insert(curCol, 1, (char)ch);
+            curCol++;
+          }
+          dirty = true;
+          statusMsg = "";
           statusIsError = false;
-        } else if (cmdLine == "q") {
-          if (!dirty) {
+        }
+        if (dirty) {
+          time_t now = time(nullptr);
+          if (now - lastEcheck >= cfg_time_LSP_check && shouldCheck()) {
+            runEcheck();
+            lastEcheck = now;
+          }
+        }
+        redraw();
+        continue;
+      }
+      // ══════════════════════════════════════════════════════════════
+      // MODO VISUAL / VISUAL LINE
+      // ══════════════════════════════════════════════════════════════
+      if (mode == Mode::Visual || mode == Mode::VisualLine) {
+        if (ch == 27) {  // Esc - cancela
+          mode = Mode::Normal;
+          redraw();
+          continue;
+        }
+        // Navegação hjkl e setas estendem a seleção
+        if (ch == 'h' || ch == KEY_LEFT) {
+          if (curCol > 0) curCol--;
+          redraw();
+          continue;
+        }
+        if (ch == 'l' || ch == KEY_RIGHT) {
+          if (curCol < (int)lines[curRow].size() - 1) curCol++;
+          redraw();
+          continue;
+        }
+        if (ch == 'j' || ch == KEY_DOWN) {
+          if (curRow < (int)lines.size() - 1) {
+            curRow++;
+            clampCursor();
+          }
+          redraw();
+          continue;
+        }
+        if (ch == 'k' || ch == KEY_UP) {
+          if (curRow > 0) {
+            curRow--;
+            clampCursor();
+          }
+          redraw();
+          continue;
+        }
+        if (ch == 'w') {
+          wordForward();
+          clampCursor();
+          redraw();
+          continue;
+        }
+        if (ch == 'b') {
+          wordBack();
+          clampCursor();
+          redraw();
+          continue;
+        }
+        if (ch == '0') {
+          curCol = 0;
+          redraw();
+          continue;
+        }
+        if (ch == '$') {
+          curCol = std::max(0, (int)lines[curRow].size() - 1);
+          redraw();
+          continue;
+        }
+        if (ch == 'G') {
+          curRow = (int)lines.size() - 1;
+          clampCursor();
+          redraw();
+          continue;
+        }
+        if (ch == 'y') {  // yank
+          std::string sel = getSelection();
+          yankToClipboard(sel);
+          statusMsg = "yanked " +
+                      std::to_string(std::abs(curRow - selAnchorRow) + 1) +
+                      " line(s)";
+          mode = Mode::Normal;
+          redraw();
+          continue;
+        }
+        redraw();
+        continue;
+      }
+      if (mode == Mode::Command) {
+        if (ch == 27) {
+          mode = Mode::Normal;
+          cmdLine = "";
+        } else if (ch == '\n' || ch == KEY_ENTER) {
+          if (cmdLine == "w") {
+            saveFile();
+          } else if (cmdLine == "q") {
+            if (!dirty) {
+              pluginManagerShutdown();
+              endwin();
+              return;
+            }
+            statusMsg = "Unsaved changes - :w first, or :q!";
+            statusIsError = true;
+          } else if (cmdLine == "q!") {
+            pluginManagerShutdown();
             endwin();
             return;
+          } else if (cmdLine == "wq" || cmdLine == "x") {
+            if (saveAndCompile()) {
+              pluginManagerShutdown();
+              endwin();
+              return;
+            }
+          } else if (cmdLine == "u") {
+            doUndo();
+          } else if (cmdLine == "redo") {
+            doRedo();
+          } else if (pluginManagerHasCommand(cmdLine)) {
+            fireEvent(NOVA_EVENT_COMMAND, 0, cmdLine.c_str(), "");
+            mode = Mode::Normal;
+            cmdLine = "";
+            // Se o plugin abriu popup/confirm/input, processa imediatamente
+            // fazendo o próximo wgetch retornar ERR instantaneamente
+            wtimeout(editorWin, 0);
+            redraw();
+            continue;
+          } else {
+            // :number — go to line
+            bool isNum = !cmdLine.empty();
+            for (char c : cmdLine)
+              if (!std::isdigit((unsigned char)c)) {
+                isNum = false;
+                break;
+              }
+            if (isNum) {
+              int target = std::stoi(cmdLine) - 1;
+              curRow = std::max(0, std::min(target, (int)lines.size() - 1));
+              clampCursor();
+            } else {
+              statusMsg = "Unknown command: " + cmdLine;
+              statusIsError = true;
+            }
           }
-          statusMsg = "Unsaved changes — :w first, or :q!";
-          statusIsError = true;
-        } else if (cmdLine == "q!") {
-          endwin();
-          return;
-        } else if (cmdLine == "wq" || cmdLine == "x") {
-          saveAndCompile();
-          endwin();
-          return;
-        } else {
-          statusMsg = "Unknown command: " + cmdLine;
-          statusIsError = true;
-        }
-        mode = Mode::Normal;
-        cmdLine = "";
-      } else if (ch == KEY_BACKSPACE || ch == 127) {
-        if (!cmdLine.empty())
-          cmdLine.pop_back();
-        else
           mode = Mode::Normal;
-      } else if (ch >= 32 && ch < 127) {
-        cmdLine += (char)ch;
+          cmdLine = "";
+        } else if (ch == KEY_BACKSPACE || ch == 127) {
+          if (!cmdLine.empty())
+            cmdLine.pop_back();
+          else
+            mode = Mode::Normal;
+        } else if (ch >= 32 && ch < 127) {
+          cmdLine += (char)ch;
+        }
+        redraw();
+        continue;
       }
-      redraw();
-      continue;
-    }
 
-    if (ch == 'v') {
-      mode = Mode::Visual;
-      selAnchorRow = curRow;
-      selAnchorCol = curCol;
-      cmdBuffer = "";
-      redraw();
-      continue;
-    }
-    if (ch == 'V') {
-      mode = Mode::VisualLine;
-      selAnchorRow = curRow;
-      selAnchorCol = 0;
-      cmdBuffer = "";
-      redraw();
-      continue;
-    }
-    if (ch == 'y' && ch == 'y') {  // yy — linha inteira no normal
-      yankToClipboard(lines[curRow] + "\n");
-      statusMsg = "yanked line";
-      redraw();
-      continue;
-    }
-    // ══════════════════════════════════════════════════════════════
-    // MODO NORMAL
-    // ══════════════════════════════════════════════════════════════
-    if (ch == ':') {
-      mode = Mode::Command;
-      cmdLine = "";
+      if (ch == 'v') {
+        mode = Mode::Visual;
+        selAnchorRow = curRow;
+        selAnchorCol = curCol;
+        cmdBuffer = "";
+        redraw();
+        continue;
+      }
+      if (ch == 'V') {
+        mode = Mode::VisualLine;
+        selAnchorRow = curRow;
+        selAnchorCol = 0;
+        cmdBuffer = "";
+        redraw();
+        continue;
+      }
+
+      // ══════════════════════════════════════════════════════════════
+      // NORMAL MODE
+      // ══════════════════════════════════════════════════════════════
+      if (ch == ':') {
+        mode = Mode::Command;
+        cmdLine = "";
+        redraw();
+        continue;
+      }
+      if (ch == '/') {
+        mode = Mode::Search;
+        searchQuery = "";
+        searchMatches.clear();
+        searchIndex = 0;
+        cmdBuffer = "";
+        redraw();
+        continue;
+      }
+      if (ch == 'u') {
+        doUndo();
+        redraw();
+        continue;
+      }
+      if (ch == 'U') {
+        doRedo();
+        redraw();
+        continue;
+      }
+      if (ch == 'p') {
+        std::string pasted;
+#ifdef _WIN32
+      FILE* fp = popen("powershell -command \"Get-Clipboard\" 2>nul", "r");
+#else
+      bool isWSL = false;
+      {
+        std::ifstream wslf("/proc/version");
+        std::string wslline;
+        if (std::getline(wslf, wslline))
+          if (wslline.find("icrosoft") != std::string::npos) isWSL = true;
+      }
+      FILE* fp = nullptr;
+      if (isWSL)
+        fp =
+            popen("powershell.exe -command \"Get-Clipboard\" 2>/dev/null", "r");
+      else
+        fp = popen(
+            "xclip -selection clipboard -o 2>/dev/null || xsel --clipboard "
+            "--output 2>/dev/null",
+            "r");
+#endif
+      if (fp) {
+        char buf[256];
+        while (fgets(buf, sizeof(buf), fp)) pasted += buf;
+        pclose(fp);
+      }
+      if (pasted.empty()) pasted = yankBuffer;
+      if (!pasted.empty()) {
+        pushUndo();
+        pasted.erase(std::remove(pasted.begin(), pasted.end(), '\r'),
+                     pasted.end());
+        std::stringstream ss(pasted);
+        std::string ln;
+        bool first = true;
+        while (std::getline(ss, ln)) {
+          if (first) {
+            lines[curRow].insert(curCol, ln);
+            curCol += ln.size();
+            first = false;
+          } else {
+            lines[curRow] = lines[curRow].substr(0, curCol);
+            lines.insert(lines.begin() + curRow + 1, ln);
+            curRow++;
+            curCol = ln.size();
+          }
+        }
+        dirty = true;
+      }
       redraw();
       continue;
     }
     if (ch == 'i') {
       mode = Mode::Insert;
+      searchQuery = "";
+      searchMatches.clear();
       cmdBuffer = "";
       redraw();
       continue;
@@ -1025,6 +1612,7 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
       continue;
     }
     if (ch == 'o') {
+      pushUndo();
       lines.insert(lines.begin() + curRow + 1, "");
       curRow++;
       curCol = 0;
@@ -1035,6 +1623,7 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
       continue;
     }
     if (ch == 'O') {
+      pushUndo();
       lines.insert(lines.begin() + curRow, "");
       curCol = 0;
       dirty = true;
@@ -1043,7 +1632,6 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
       redraw();
       continue;
     }
-
     if (ch == 'h') {
       if (curCol > 0) curCol--;
       redraw();
@@ -1100,6 +1688,7 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
     }
     if (ch == 'x') {
       if (!lines[curRow].empty() && curCol < (int)lines[curRow].size()) {
+        pushUndo();
         lines[curRow].erase(curCol, 1);
         dirty = true;
         clampCursor();
@@ -1108,9 +1697,10 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
       continue;
     }
 
-    // Comandos com buffer (dd, gg)
+    // Buffer commands (dd, gg, yy)
     cmdBuffer += (char)ch;
     if (cmdBuffer == "dd") {
+      pushUndo();
       lines.erase(lines.begin() + curRow);
       if (lines.empty()) lines.push_back("");
       clampCursor();
@@ -1130,7 +1720,7 @@ void runEditor(const std::string& editFile, const std::string& outputFileArg,
 
     if (dirty) {
       time_t now = time(nullptr);
-      if (now - lastEcheck >= 1) {
+      if (now - lastEcheck >= cfg_time_LSP_check && shouldCheck()) {
         runEcheck();
         lastEcheck = now;
       }

@@ -5,11 +5,15 @@ CXXFLAGS = -std=c++17 -Wall -Iinclude $(LLVM_CXXFLAGS)
 BUILD_VERSION = $(shell cat .build_no)
 CXXFLAGS += -DNOVA_BUILD_VERSION=$(BUILD_VERSION)
 
-# Linkagem
 LDFLAGS_DYNAMIC = $(shell llvm-config --ldflags --system-libs --libs all)
-LIBS = -lncurses
 
-SRCS = src/main.cpp src/lexer.cpp src/parser.cpp src/codegen.cpp src/analysis.cpp src/editor.cpp
+ifeq ($(OS),Windows_NT)
+    LIBS = -lncursesw
+else
+    LIBS = -lncurses -ldl
+endif
+
+SRCS = src/main.cpp src/lexer.cpp src/parser.cpp src/codegen.cpp src/analysis.cpp src/editor.cpp src/config.cpp src/plugin_manager.cpp
 TARGET = n++
 
 # ── Compilador Nova (n++) ─────────────────────────────────────────────────────

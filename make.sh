@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Nova64 Build System — Linux e Windows/MSYS2
+# Nova Build System — Linux e Windows/MSYS2
 # ─────────────────────────────────────────────────────────────────────────────
 
 VERSION_FILE=".build_no"
@@ -25,7 +25,7 @@ NEW_VERSION=$((OLD_VERSION + 1))
 echo $NEW_VERSION > "$VERSION_FILE"
 
 echo "----------------------------------------"
-echo "🛠️  Nova64 Build System | Build #$NEW_VERSION"
+echo "🛠️  Nova Build System | Build #$NEW_VERSION"
 $IS_WINDOWS && echo "    Platform: Windows/MSYS2" || echo "    Platform: Linux"
 echo "----------------------------------------"
 

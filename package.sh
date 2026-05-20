@@ -29,7 +29,7 @@ fi
 
 cp "$BIN_NAME" "$DIST_DIR/"
 cp install.sh "$DIST_DIR/"
-cp -r stdlib "$DIST_DIR/"
+cp -r "$REPO/nova.cfg" "$DIST_DIR/stdlib/"
 
 chmod +x "$DIST_DIR/$BIN_NAME"
 chmod +x "$DIST_DIR/install.sh"

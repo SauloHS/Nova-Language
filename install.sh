@@ -140,6 +140,23 @@ NH_COUNT=$(ls "$LIB_DIR"/*.nh  2>/dev/null | wc -l)
 NPP_COUNT=$(ls "$LIB_DIR"/*.npp 2>/dev/null | wc -l)
 success "Standard library installed ($NH_COUNT headers, $NPP_COUNT modules)"
 
+info "Installing editor config..."
+if $IS_WINDOWS; then
+    if [[ ! -f "$LIB_DIR/nova.cfg" ]]; then
+        cp "$REPO/stdlib/nova.cfg" "$LIB_DIR/nova.cfg"
+        success "Config installed at $LIB_DIR/nova.cfg"
+    else
+        warn "nova.cfg already exists — skipping (your settings are preserved)"
+    fi
+else
+    if [[ ! -f "$LIB_DIR/nova.cfg" ]]; then
+        sudo cp "$REPO/stdlib/nova.cfg" "$LIB_DIR/nova.cfg"
+        success "Config installed at $LIB_DIR/nova.cfg"
+    else
+        warn "nova.cfg already exists — skipping (your settings are preserved)"
+    fi
+fi
+
 # ── Install orbit ─────────────────────────────────────────────────────────────
 if $IS_WINDOWS; then
     warn "orbit installation is not supported on Windows yet. Skipping."

@@ -230,6 +230,7 @@ void pluginManagerClearPendingUI() {
   g_pendingUI.type = NOVA_UI_NONE;
   g_pendingUI.ownerPlugin = nullptr;
   g_pendingUI.items.clear();
+  g_pendingUI.splitLineStyles.clear(); // Limpar também os estilos das linhas do split view
 }
 
 // ── ncurses color pair registration ──────────────────────────────────────────
@@ -393,11 +394,22 @@ static std::string applyResponse(NovaResponse& resp,
           g_pendingUI.splitView.title = g_pendingUI.splitTitle.c_str();
           // COPIE linhas e null out o ponteiro original:
           g_pendingUI.splitLines.clear();
-          for (int j = 0; j < a.split->lineCount; j++)
+          g_pendingUI.splitLines.reserve(a.split->lineCount);
+          g_pendingUI.splitLineStyles.clear();
+          g_pendingUI.splitLineStyles.reserve(a.split->lineCount);
+
+          for (int j = 0; j < a.split->lineCount; j++) {
             g_pendingUI.splitLines.push_back(
                 a.split->lines[j] ? a.split->lines[j] : "");
-          g_pendingUI.splitView.lines = nullptr;
+            if (a.split->lineStyles) {
+                g_pendingUI.splitLineStyles.push_back(a.split->lineStyles[j]);
+            } else {
+                g_pendingUI.splitLineStyles.push_back({NOVA_COLOR_NONE, NOVA_COLOR_NONE, 0, 0});
+            }
+          }
+          g_pendingUI.splitView.lines = nullptr; // Define como nullptr para evitar dangling pointer e transferir propriedade
           g_pendingUI.splitView.lineCount = (int)g_pendingUI.splitLines.size();
+          g_pendingUI.splitView.lineStyles = g_pendingUI.splitLineStyles.data(); // Aponta para os dados copiados
         }
         break;
       case NOVA_ACTION_CLOSE_SPLIT:

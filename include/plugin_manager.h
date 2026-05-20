@@ -65,6 +65,7 @@ struct PendingUI {
   std::vector<std::string> splitLines;
   // ADICIONE ESTA:
   std::string splitTitle;
+  std::vector<NovaStyle> splitLineStyles; // Adicionado para armazenar os estilos das linhas do split view
 };
 
 extern PendingUI g_pendingUI;

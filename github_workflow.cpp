@@ -253,6 +253,104 @@ static NovaResponse showDiff(NovaBuffer* buf) {
   return singleAction(makeSplit("Git Diff", buildDiffLines(buf), false));
 }
 
+// Helper para criar uma resposta com múltiplas ações
+static NovaResponse createMultiActionResponse(const std::vector<NovaAction>& actions) {
+    NovaResponse resp = {nullptr, 0};
+    resp.actionCount = (int)actions.size();
+    resp.actions = (NovaAction*)calloc(actions.size(), sizeof(NovaAction));
+    for (size_t i = 0; i < actions.size(); ++i) {
+        resp.actions[i] = actions[i];
+    }
+    return resp;
+}
+
+// Helper para gerar destaques a partir da saída do git diff para visualização inline
+static NovaResponse highlightDiffs(NovaBuffer* buf) {
+  std::string repo = detectRepo(buf);
+  std::string file = currentFile(buf);
+  std::vector<NovaHighlight> highlights;
+
+  // Primeiro, limpa os destaques existentes
+  NovaAction clearAction = {};
+  clearAction.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+  
+  // Se o arquivo estiver vazio ou não estiver em um repositório, apenas limpa os destaques e mostra o status
+  if (file.empty()) {
+    NovaAction statusAction = makeStatus("No file to diff for highlights.");
+    return createMultiActionResponse({clearAction, statusAction});
+  }
+
+  // Obtém a saída do diff com contexto unificado 0 para facilitar a análise
+  int rc = 0;
+  std::string diffOutput =
+      runCommand("git -C " + shellQuote(repo) + " diff -U0 -- " + shellQuote(file), &rc);
+
+  if (rc != 0) {
+    NovaAction statusAction = makeStatus("Git diff failed for highlights: " + trim(diffOutput));
+    return createMultiActionResponse({clearAction, statusAction});
+  }
+
+  std::stringstream ss(diffOutput);
+  std::string line;
+  int currentBufferLine = -1; // Linha 0-indexada no buffer real do editor
+
+  while (std::getline(ss, line)) {
+    if (line.rfind("@@", 0) == 0) {
+      // Analisa o cabeçalho do hunk: @@ -old_start,old_count +new_start,new_count @@
+      size_t plus_pos = line.find('+');
+      size_t comma_pos = line.find(',', plus_pos);
+      if (plus_pos != std::string::npos) {
+        std::string new_start_str = line.substr(plus_pos + 1, comma_pos - (plus_pos + 1));
+        currentBufferLine = std::stoi(new_start_str) - 1; // Converte para 0-indexado
+      }
+    } else if (currentBufferLine != -1) {
+      if (line.rfind("+", 0) == 0 && line.rfind("+++", 0) != 0) {
+        // Esta é uma linha adicionada no buffer atual
+        if (currentBufferLine >= 0 && currentBufferLine < buf->lineCount) {
+          NovaHighlight h = {};
+          h.row = currentBufferLine;
+          h.colStart = 0;
+          h.colEnd = (int)buf->lines[currentBufferLine].size(); // Destaca a linha inteira
+          h.style = {NOVA_COLOR_BRIGHT_GREEN, NOVA_COLOR_NONE, 1, 0}; // Verde para adições
+          highlights.push_back(h);
+        }
+        currentBufferLine++; // Move para a próxima linha no buffer
+      } else if (line.rfind("-", 0) == 0 && line.rfind("---", 0) != 0) {
+        // Esta é uma linha excluída da versão anterior, não pode ser destacada no buffer atual
+        // Não incrementa currentBufferLine, pois esta linha não está no buffer atual.
+      } else if (line.rfind(" ", 0) == 0) {
+        // Linha de contexto, existe em ambos. Apenas incrementa o contador de linhas.
+        currentBufferLine++;
+      }
+      // Outras linhas de diff (diff --git, index, ---, +++) são ignoradas para destaques
+    }
+  }
+
+  NovaAction addHighlightsAction = {};
+  addHighlightsAction.type = NOVA_ACTION_ADD_HIGHLIGHT;
+  addHighlightsAction.highlights = (NovaHighlight*)calloc(highlights.size(), sizeof(NovaHighlight));
+  addHighlightsAction.highlightCount = (int)highlights.size();
+  for (size_t k = 0; k < highlights.size(); k++) {
+      addHighlightsAction.highlights[k] = highlights[k];
+  }
+
+  NovaResponse resp = {};
+  if (highlights.empty()) {
+      NovaAction statusAction = makeStatus("No diffs for current file.");
+      resp.actions = (NovaAction*)calloc(2, sizeof(NovaAction));
+      resp.actionCount = 2;
+      resp.actions[0] = clearAction;
+      resp.actions[1] = statusAction;
+  } else {
+      resp.actions = (NovaAction*)calloc(2, sizeof(NovaAction));
+      resp.actionCount = 2;
+      resp.actions[0] = clearAction;
+      resp.actions[1] = addHighlightsAction;
+  }
+  return resp;
+}
+
+
 static NovaResponse connectGithub() {
   int rc = 0;
   std::string status = runCommand("gh auth status", &rc);
@@ -398,7 +496,13 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
     if ((event->uiResultType == NOVA_UI_POPUP_CANCEL ||
          event->uiResultType == NOVA_UI_INPUT_CANCEL) &&
         g_waitState == WAIT_NONE) {
-      g_diffOpen = false;
+      if (g_diffOpen) {
+          g_diffOpen = false;
+          NovaAction clearHighlights = {};
+          clearHighlights.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+          // Retorna uma ação para fechar o split e uma para limpar os destaques
+          return createMultiActionResponse({singleAction(makeCloseSplit()).actions[0], clearHighlights});
+      }
       return empty;
     }
 

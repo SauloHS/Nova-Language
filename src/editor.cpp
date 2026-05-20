@@ -765,8 +765,32 @@ endwin();
         wattroff(splitWin, COLOR_PAIR(COL_DIALOG) | A_BOLD);
         int h = getmaxy(splitWin) - 2;
         int w = getmaxx(splitWin) - 4;
-        for (int j = 0; j < h && j < (int)sv.splitLines.size(); j++)
+        for (int j = 0; j < h && j < (int)sv.splitLines.size(); j++) {
+          int lineIdx = j;
+          int attr = 0;
+          if (sv.splitView.lineStyles && lineIdx < sv.splitView.lineCount) {
+            static std::map<std::pair<int, int>, int> splitColorCache;
+            static int splitNextColorPair = 50; // Use a distinct range for split view
+            NovaStyle s = sv.splitView.lineStyles[lineIdx];
+            auto key = std::make_pair(s.fg, s.bg);
+            auto it = splitColorCache.find(key);
+            int pair = 0;
+            if (it != splitColorCache.end()) {
+              pair = it->second;
+            } else {
+              pair = splitNextColorPair++;
+              init_pair(pair, s.fg == NOVA_COLOR_NONE ? -1 : s.fg,
+                        s.bg == NOVA_COLOR_NONE ? -1 : s.bg);
+              splitColorCache[key] = pair;
+            }
+            attr = COLOR_PAIR(pair);
+            if (s.bold) attr |= A_BOLD;
+            if (s.underline) attr |= A_UNDERLINE;
+          }
+          if (attr != 0) wattron(splitWin, attr);
           mvwaddnstr(splitWin, j + 1, 2, sv.splitLines[j].c_str(), w);
+          if (attr != 0) wattroff(splitWin, attr);
+        }
         wrefresh(splitWin);
       }
     } else if (splitWin) {

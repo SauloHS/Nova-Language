@@ -190,7 +190,7 @@ static NovaAction makeSplit(const std::string& title,
   split->lines = (const char**)calloc(lines.size(), sizeof(char*));
   split->lineStyles = (NovaStyle*)calloc(lines.size(), sizeof(NovaStyle));
   split->position = NOVA_SPLIT_RIGHT;
-  split->size = 72;
+  split->size = 48; // Changed from 72 to 48 for a smaller split view
   split->borderStyle = {NOVA_COLOR_BLUE, NOVA_COLOR_NONE, 1, 0};
   split->modal = modal ? 1 : 0;
 
@@ -375,7 +375,7 @@ extern "C" {
 const char* plugin_info() { return "github_workflow|1.0|nova"; }
 
 const char* plugin_commands() {
-  return "gh-connect,repo,diff,commit,release,issues";
+  return "gh-connect,repo,diff,commit,release,issues,diffs";
 }
 
 NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
@@ -385,7 +385,13 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
   if (event->type == NOVA_EVENT_TICK) {
     if (!g_diffOpen) return empty;
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
-    return showDiff(buf);
+    
+    // When refreshing diff, also clear any existing highlights (from :diffs)
+    NovaAction clearHighlights = {};
+    clearHighlights.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+    NovaAction showSplit = makeSplit("Git Diff", buildDiffLines(buf), false);
+
+    return createMultiActionResponse({clearHighlights, showSplit});
   }
 
   if (event->type == NOVA_EVENT_UI_RESULT) {
@@ -457,6 +463,17 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
     return empty;
   }
 
+// Helper to create a multi-action response
+static NovaResponse createMultiActionResponse(const std::vector<NovaAction>& actions) {
+    NovaResponse resp = {nullptr, 0};
+    resp.actionCount = (int)actions.size();
+    resp.actions = (NovaAction*)calloc(actions.size(), sizeof(NovaAction));
+    for (size_t i = 0; i < actions.size(); ++i) {
+        resp.actions[i] = actions[i];
+    }
+    return resp;
+}
+
   if (event->type != NOVA_EVENT_COMMAND || !event->command) return empty;
   std::string command = event->command;
 
@@ -464,7 +481,37 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
   if (command == "repo") return configureRepo(buf);
   if (command == "diff") {
     g_diffOpen = !g_diffOpen;
-    return g_diffOpen ? showDiff(buf) : singleAction(makeCloseSplit());
+    if (g_diffOpen) {
+      // Opening split view: clear existing highlights and show split
+      NovaAction clearHighlights = {};
+      clearHighlights.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+      NovaAction showSplit = makeSplit("Git Diff", buildDiffLines(buf), false);
+      
+      return createMultiActionResponse({clearHighlights, showSplit});
+    } else {
+      // Closing split view: just close it
+      return singleAction(makeCloseSplit());
+    }
+  }
+  if (command == "diffs") {
+    // If diff split is open, close it before showing highlights
+    if (g_diffOpen) {
+        g_diffOpen = false; // Set to false to prevent NOVA_EVENT_TICK from reopening
+        NovaAction closeSplit = makeCloseSplit();
+        NovaResponse highlightResp = highlightDiffs(buf); // This already clears highlights and adds new ones.
+        
+        // Combine closeSplit and highlightResp's actions
+        std::vector<NovaAction> combinedActions;
+        combinedActions.push_back(closeSplit);
+        for (int k = 0; k < highlightResp.actionCount; ++k) {
+            combinedActions.push_back(highlightResp.actions[k]);
+        }
+        // IMPORTANT: Free the original highlightResp.actions after copying
+        free(highlightResp.actions); 
+        return createMultiActionResponse(combinedActions);
+    }
+    // If split view not open, just highlight
+    return highlightDiffs(buf);
   }
   if (command == "commit") return startCommit();
   if (command == "release") return startRelease();

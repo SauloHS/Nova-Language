@@ -449,23 +449,13 @@ endwin();
     ev.uiSelectedIndex = uiSelectedIndex;
     ev.uiSelectedText = uiSelectedText;
 
-    std::string msg =
-        pluginManagerFireEvent(&ev, &buf, lines, curRow, curCol, dirty,
-                               pluginHighlights, inlineText, bufferRevision);
-    if (!msg.empty()) {
-      statusMsg = msg;
-      statusIsError = false;
-    }
+    pluginManagerFireEvent(&ev, &buf, lines, curRow, curCol, dirty,
+                           pluginHighlights, inlineText, bufferRevision);
   };
 
   auto pollPluginResponses = [&]() {
-    std::string msg =
-        pluginManagerPoll(lines, curRow, curCol, dirty, pluginHighlights,
-                          inlineText, bufferRevision);
-    if (!msg.empty()) {
-      statusMsg = msg;
-      statusIsError = false;
-    }
+    pluginManagerPoll(lines, curRow, curCol, dirty, pluginHighlights,
+                      inlineText, bufferRevision);
   };
 
   auto pushUndo = [&]() {

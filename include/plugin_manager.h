@@ -53,17 +53,14 @@ struct PendingUI {
   NovaPopupList popup = {};
   std::vector<std::string> items;
   int selectedIndex = 0;
-  // ADICIONE ESTAS:
   std::string popupTitle;
   NovaInputDialog inputDialog = {};
   std::string inputText;
   NovaConfirmDialog confirmDialog = {};
-  // ADICIONE ESTAS:
   std::string confirmTitle;
   std::string confirmMessage;
   NovaSplit splitView = {};
   std::vector<std::string> splitLines;
-  // ADICIONE ESTA:
   std::string splitTitle;
   std::vector<NovaStyle> splitLineStyles; // Adicionado para armazenar os estilos das linhas do split view
 };

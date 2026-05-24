@@ -23,6 +23,9 @@ static std::set<std::string> declaredVarNames;
 // Conjunto de structs declarados — usado para detectar mutabilidade
 static std::set<std::string> declaredStructNames;
 
+// Conjunto de enums declarados — usado para saber quando tratar como i32
+static std::set<std::string> declaredEnumNames;
+
 // ── Mutabilidade em escopo: variáveis imutáveis ────────────────────────────────
 // Registro de quais variáveis locais são imutáveis
 static std::set<std::string> immutableVars;
@@ -269,14 +272,23 @@ static DataType parseDataType() {
     }
     // Tipo struct ou qualificado: Point  |  geo::Point
     if (current.type == TOKEN_IDENT) {
-        lastCustomTypeName = current.value;
+        std::string identName = current.value;
         current = nextToken();
         if (current.type == TOKEN_COLONCOLON) {
             current = nextToken();
             std::string structName = eat(TOKEN_IDENT).value;
-            lastCustomTypeName = lastCustomTypeName + "::" + structName;
+            lastCustomTypeName = identName + "::" + structName;
+            return DataType::Custom;
+        } else {
+            // Verifica se é um nome de enum
+            if (declaredEnumNames.count(identName)) {
+                // Enums são tratados como i32
+                return DataType::Int;
+            }
+            // Caso contrário, é um struct
+            lastCustomTypeName = identName;
+            return DataType::Custom;
         }
-        return DataType::Custom;
     }
 
     // Mensagem de erro rica
@@ -833,17 +845,34 @@ static NodePtr parseLetDecl(int tokLine, int tokCol) {
                     customTypeName, name, "@literal:" + fieldNames,
                     std::move(args), isMut, tokLine, tokCol);
             }
-            if (current.type == TOKEN_IDENT) {
+            if (current.type == TOKEN_IDENT || current.type == TOKEN_SELF) {
                 std::string callName = current.value;
+                int callLine = current.line, callCol = current.col;
                 current = nextToken();
+
+                // Handle qualified names: ns::Name or ns::ns::Name
+                while (current.type == TOKEN_COLONCOLON) {
+                    current = nextToken();
+                    if (current.type != TOKEN_IDENT && current.type != TOKEN_SELF) {
+                        reportError(sourceFile, current.line, current.col,
+                                    "expected identifier after '::'",
+                                    getSourceLine(current.line), std::max(1,(int)current.value.size()),
+                                    "qualified name format: Namespace::Identifier");
+                    }
+                    callName += "::" + current.value;
+                    int prevLine = current.line, prevCol = current.col;
+                    current = nextToken();
+                    // Continue checking for more :: sequences
+                }
+
                 if (current.type == TOKEN_LPAREN) {
                     current = nextToken();
                     std::vector<NodePtr> args;
                     while (current.type != TOKEN_RPAREN) {
                         if (current.type == TOKEN_EOF)
-                            reportError(sourceFile, tokLine, tokCol,
+                            reportError(sourceFile, callLine, callCol,
                                 "unterminated argument list for '" + callName + "()'",
-                                getSourceLine(tokLine), (int)callName.size(), "add ')'");
+                                getSourceLine(callLine), (int)callName.size(), "add ')'");
                         args.push_back(parseExpr());
                         if (current.type == TOKEN_COMMA) current = nextToken();
                     }
@@ -851,13 +880,13 @@ static NodePtr parseLetDecl(int tokLine, int tokCol) {
                     eat(TOKEN_SEMI);
                     declaredVarStructType[name] = customTypeName;
                     return std::make_unique<StructVarDeclNode>(
-                        customTypeName, name, callName, std::move(args), isMut, tokLine, tokCol);
+                        customTypeName, name, callName, std::move(args), isMut, callLine, callCol);
                 }
                 eat(TOKEN_SEMI);
                 declaredVarStructType[name] = customTypeName;
                 return std::make_unique<StructVarDeclNode>(
                     customTypeName, name, "@copy:" + callName,
-                    std::vector<NodePtr>{}, isMut, tokLine, tokCol);
+                    std::vector<NodePtr>{}, isMut, callLine, callCol);
             }
             reportError(sourceFile, current.line, current.col,
                 "struct variable '" + name + "' must be initialized with a function call, another variable, or a literal { field: value, ... }",
@@ -1763,6 +1792,49 @@ static std::vector<NodePtr> parseNhFile(const std::string& nhPath,
             continue;
         }
 
+        // enum declaração de enumeração
+        if (current.type == TOKEN_ENUM) {
+            int tl = current.line, tc = current.col;
+            current = nextToken();
+            std::string eName = eat(TOKEN_IDENT).value;
+            std::string qualEName = currentNhNamespace.empty() ? eName : currentNhNamespace + "::" + eName;
+            eat(TOKEN_LBRACE);
+            std::vector<std::pair<std::string, NodePtr>> values;
+            int discriminante = 0;
+            while (current.type != TOKEN_RBRACE && current.type != TOKEN_EOF) {
+                if (current.type == TOKEN_IDENT) {
+                    std::string enumValueName = current.value;
+                    current = nextToken();
+
+                    NodePtr discriminantExpr = nullptr;
+                    if (current.type == TOKEN_ASSIGN) {
+                        current = nextToken();
+                        discriminantExpr = parseExpr();
+                    }
+
+                    values.push_back({enumValueName, std::move(discriminantExpr)});
+
+                    if (current.type == TOKEN_COMMA) {
+                        current = nextToken();
+                    }
+                } else {
+                    reportError(nhPath, current.line, current.col,
+                                "unexpected token in enum declaration",
+                                getSourceLine(current.line), std::max(1,(int)current.value.size()),
+                                "enum syntax: enum Name { VALUE1, VALUE2 = expr, ... }");
+                }
+            }
+            if (current.type == TOKEN_EOF)
+                reportError(nhPath, current.line, current.col,
+                            "unterminated enum '" + eName + "' — missing '}'",
+                            getSourceLine(current.line), 1);
+            eat(TOKEN_RBRACE);
+            if (current.type == TOKEN_SEMI) current = nextToken();
+            decls.push_back(std::make_unique<EnumDefNode>(
+                qualEName, std::move(values), tl, tc));
+            continue;
+        }
+
         // fn declaração de função (header .nh)
         if (current.type == TOKEN_FN) {
             int tl = current.line, tc = current.col;
@@ -2038,6 +2110,7 @@ ProgramNode parseProgram(const std::string& source, const std::string& filename)
     declaredFunctionNames.clear();
     declaredVarNames.clear();
     declaredStructNames.clear();
+    declaredEnumNames.clear();
     immutableVars.clear();
     fnSignatures.clear();
     variadicFunctions.clear();
@@ -2166,6 +2239,49 @@ ProgramNode parseProgram(const std::string& source, const std::string& filename)
             eat(TOKEN_RBRACE);
             program.declarations.push_back(
                 std::make_unique<StructDefNode>(sName, std::move(fields), std::vector<StructMethod>{}, tokLine, tokCol));
+            continue;
+        }
+
+        // ── enum declaration ──────────────────────────────────────────────────
+        if (current.type == TOKEN_ENUM) {
+            int tokLine = current.line, tokCol = current.col;
+            current = nextToken();
+            std::string eName = eat(TOKEN_IDENT).value;
+            declaredEnumNames.insert(eName);
+            eat(TOKEN_LBRACE);
+            std::vector<std::pair<std::string, NodePtr>> values;
+            int discriminante = 0;
+            while (current.type != TOKEN_RBRACE && current.type != TOKEN_EOF) {
+                if (current.type == TOKEN_IDENT) {
+                    std::string enumValueName = current.value;
+                    current = nextToken();
+
+                    NodePtr discriminantExpr = nullptr;
+                    if (current.type == TOKEN_ASSIGN) {
+                        current = nextToken();
+                        discriminantExpr = parseExpr();
+                    }
+
+                    values.push_back({enumValueName, std::move(discriminantExpr)});
+
+                    if (current.type == TOKEN_COMMA) {
+                        current = nextToken();
+                    }
+                } else {
+                    reportError(sourceFile, current.line, current.col,
+                                "unexpected token in enum declaration",
+                                getSourceLine(current.line), std::max(1,(int)current.value.size()),
+                                "enum syntax: enum Name { VALUE1, VALUE2 = expr, ... }");
+                }
+            }
+            if (current.type == TOKEN_EOF)
+                reportError(sourceFile, current.line, current.col,
+                            "unterminated enum '" + eName + "' — missing '}'",
+                            getSourceLine(current.line), 1);
+            eat(TOKEN_RBRACE);
+            if (current.type == TOKEN_SEMI) current = nextToken();
+            program.declarations.push_back(
+                std::make_unique<EnumDefNode>(eName, std::move(values), tokLine, tokCol));
             continue;
         }
 

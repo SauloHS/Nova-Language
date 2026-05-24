@@ -42,6 +42,18 @@ The editor then applies those actions.
 
 Plugins never modify editor state directly.
 
+`NOVA_EVENT_COMMAND`, `NOVA_EVENT_UI_RESULT`, and `NOVA_EVENT_TICK` run
+asynchronously in the editor runtime. A plugin can block on HTTP, shell
+commands, or other I/O in those events without freezing the editor UI.
+
+Each plugin runs at most one async task at a time. If the same plugin receives
+multiple async events while it is busy, Nova keeps only the latest pending
+event (`latest-wins` policy).
+
+If a delayed async response tries to modify the buffer after the user has
+already edited it, Nova may discard the buffer-mutating actions from that
+response to preserve editor state consistency.
+
 ---
 
 # Plugin directory
@@ -167,6 +179,13 @@ const char* plugin_commands() {
 
 Every interaction in Nova becomes an event.
 
+Concurrency rules:
+
+* `NOVA_EVENT_COMMAND`, `NOVA_EVENT_UI_RESULT`, and `NOVA_EVENT_TICK` are asynchronous
+* `NOVA_EVENT_INIT`, `NOVA_EVENT_SHUTDOWN`, `NOVA_EVENT_SAVE`,
+  `NOVA_EVENT_KEY`, `NOVA_EVENT_INSERT_CHAR`, and `NOVA_EVENT_CURSOR_MOVE` remain synchronous
+* Plugins must keep their own global/static state thread-safe
+
 ---
 
 # NovaEvent
@@ -201,6 +220,7 @@ typedef struct {
 | `NOVA_EVENT_CURSOR_MOVE` | Cursor moved                   |
 | `NOVA_EVENT_COMMAND`     | User executed command          |
 | `NOVA_EVENT_UI_RESULT`   | User interacted with plugin UI |
+| `NOVA_EVENT_TICK`        | Periodic editor idle tick      |
 
 ---
 
@@ -236,6 +256,10 @@ if (event->type == NOVA_EVENT_COMMAND &&
     // handle command
 }
 ```
+
+For long-running command handlers, prefer returning UI/status/highlight actions
+when the work completes. Do not assume the buffer is still unchanged by the
+time your async response comes back.
 
 ---
 
@@ -458,8 +482,17 @@ typedef struct {
 
     NovaStyle borderStyle;
 
+    int modal; // 1 = modal (default), 0 = non-modal (editable)
+
 } NovaSplit;
 ```
+
+Set `modal = 0` for side panels that should remain visible while the user keeps
+editing, such as diffs, diagnostics, git status, or issue details. Non-modal
+splits are closed by the editor command `:close`; `Esc` is reserved for modal
+splits and popups. When `:close` closes plugin UI, Nova sends a cancel UI result
+to the owner plugin so it can stop periodic refreshes and avoid reopening the
+split on the next tick.
 
 ---
 
@@ -488,6 +521,10 @@ resp.actions[0].split = split;
 ```cpp 
 resp.actions[0].type = NOVA_ACTION_CLOSE_SPLIT;
 ```
+
+Users can also close the current plugin UI with `:close`. Plugins that reopen
+splits from `NOVA_EVENT_TICK` should treat cancel UI results as a signal to stop
+refreshing.
 
 ---
 

@@ -180,6 +180,8 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
     split->position = NOVA_SPLIT_RIGHT;
     split->size = 36;
     split->borderStyle = {NOVA_COLOR_BLUE, NOVA_COLOR_NONE, 1, 0};
+    // Allow editing while the split is open
+    split->modal = 0;
 
     resp.actions = (NovaAction*)calloc(1, sizeof(NovaAction));
     resp.actionCount = 1;

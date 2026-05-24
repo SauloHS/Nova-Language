@@ -95,6 +95,11 @@ typedef struct {
   int position;  // NOVA_SPLIT_LEFT/RIGHT/BOTTOM
   int size;      // width or height in cells, 0 = auto (30%)
   NovaStyle borderStyle;
+  // Input handling:
+  // 1 = modal (default): while open, editor consumes keys and only the split
+  //     close keys work.
+  // 0 = non-modal: user can keep editing while split is visible.
+  int modal;
 } NovaSplit;
 
 typedef struct {
@@ -167,6 +172,7 @@ typedef enum {
   NOVA_EVENT_CURSOR_MOVE = 5,
   NOVA_EVENT_COMMAND = 6,
   NOVA_EVENT_UI_RESULT = 7,  // result of a popup/input/confirm
+  NOVA_EVENT_TICK = 8,       // periodic editor idle event
 } NovaEventType;
 
 // UI result types

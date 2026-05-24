@@ -3,3 +3,9 @@
 *.so
 AGENTS.md
 *.gz
+.aider*
+*.claude
+.tar*
+.codex
+.agents
+dist

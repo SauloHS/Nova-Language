@@ -387,6 +387,41 @@ struct MethodCallNode : ASTNode {
         : varName(v), methodName(m), args(std::move(a)), line(l), col(c) {}
 };
 
+// ═════════════════════════════════════════════════════════════════
+// ENUM SUPPORT
+// ═════════════════════════════════════════════════════════════════
+
+// Enum definition: enum Name { VALUE1, VALUE2, ... }
+struct EnumDefNode : ASTNode {
+    std::string name;
+    std::vector<std::pair<std::string, NodePtr>> values; // name, optional discriminant
+    int line, col;
+    EnumDefNode(const std::string& n, std::vector<std::pair<std::string, NodePtr>> v, int l, int c)
+        : name(n), values(std::move(v)), line(l), col(c) {}
+};
+
+// Enum variable declaration: let x: Color = Color::RED;
+struct EnumVarDeclNode : ASTNode {
+    std::string enumName;     // e.g., "Color"
+    std::string varName;      // e.g., "x"
+    std::string valueName;    // e.g., "RED" (for initialization like Color::RED)
+    bool isMutable;
+    int line, col;
+    EnumVarDeclNode(const std::string& enumName, const std::string& varName,
+                    const std::string& valueName, bool mut, int l, int c)
+        : enumName(enumName), varName(varName), valueName(valueName),
+          isMutable(mut), line(l), col(c) {}
+};
+
+// Enum access: Color::RED
+struct EnumAccessNode : ASTNode {
+    std::string enumName;
+    std::string valueName;
+    int line, col;
+    EnumAccessNode(const std::string& enumName, const std::string& valueName, int l, int c)
+        : enumName(enumName), valueName(valueName), line(l), col(c) {}
+};
+
 // ═══════════════════════════════════════════════════════════════
 // INLINE ASSEMBLY / IR
 // ═══════════════════════════════════════════════════════════════

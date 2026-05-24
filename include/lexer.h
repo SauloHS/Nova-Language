@@ -91,6 +91,8 @@ enum TokenType{
     // Controle
     TOKEN_EOF,
     TOKEN_UNKNOWN,
+    // ─── ENUM SUPPORT ────────────────────────────────────────────────────────
+    TOKEN_ENUM,           // enum
 
     // ─── Legacy (mantidos para compatibilidade interna) ───────────────────────
     TOKEN_THEN          // nunca mais emitido, mantido para não quebrar switches

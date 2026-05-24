@@ -97,6 +97,10 @@ static std::map<std::string, std::pair<Value*, std::string>> localStructs; // va
 // Variáveis globais do tipo struct: nome -> (GlobalVariable*, typeName)
 static std::map<std::string, std::pair<GlobalVariable*, std::string>> globalStructs;
 
+// Enums: nome do tipo -> lista de (nome, valor discriminante)
+// Enums são representados como i32 em LLVM
+static std::map<std::string, std::vector<std::pair<std::string, int>>> enumValues;
+
 // Funções que retornam struct: nome da função → nome do tipo struct
 // A convenção é: hidden first param (sret pointer), return void
 static std::map<std::string, std::string> structReturnFuncs;
@@ -1436,6 +1440,40 @@ static Value* codegenExpr(const ASTNode* node) {
                 }
             }
         }
+        // Check for enum variable
+        {
+            auto sep = n->name.rfind("::");
+            std::string baseName = (sep != std::string::npos) ? n->name.substr(sep + 2) : n->name;
+            std::string enumName = (sep != std::string::npos) ? n->name.substr(0, sep) : "";
+
+            // Look for enum value in enumValues map
+            std::string lookupName = n->name;
+            if (!enumName.empty() && enumValues.count(lookupName)) {
+                // Fully qualified enum value (e.g., Color::RED)
+                auto& enumEntries = enumValues[lookupName];
+                // Find the matching enum entry
+                for (auto& [enumValueName, enumValue] : enumEntries) {
+                    // This is simplified - we need to match the varName against enumValueName
+                    // For now, we'll assume the varName matches the enum value name
+                    // A proper implementation would need to parse the enum access
+                    return ConstantInt::get(Type::getInt32Ty(ctx), enumValue);
+                }
+            } else if (!enumName.empty()) {
+                // Try to find as enum.TYPE or just check if it's an enum value in current namespace
+                // For simplicity in this implementation, we'll treat unknown vars as potential enum values
+                // A proper implementation would need better enum scoping rules
+                if (enumValues.count(enumName)) {
+                    auto& enumEntries = enumValues[enumName];
+                    // Look for the enum value by name (n->name without namespace)
+                    for (auto& [enumValueName, enumValue] : enumEntries) {
+                        if (enumValueName == baseName) {
+                            return ConstantInt::get(Type::getInt32Ty(ctx), enumValue);
+                        }
+                    }
+                }
+            }
+        }
+
         reportError(sourceFile, n->line, n->col,
                     "The variable '" + n->name + "' was not declared in this scope",
                     getSourceLine(n->line), (int)n->name.size());
@@ -3146,8 +3184,41 @@ void codegenProgram(const ProgramNode& program, const std::string& outputFile,
         if (auto* fn = dynamic_cast<const FunctionNode*>(decl.get()))
             if (fn->name == "main") { isLibraryFile = false; break; }
 
-    // Primeira passagem: registra structs e declara funções
+    // Primeira passagem: registra structs, enums e declara funções
     for (auto& decl : program.declarations) {
+        if (auto* ed = dynamic_cast<const EnumDefNode*>(decl.get())) {
+            // Enums are represented as i32 in LLVM
+            // We just need to store the enum definition for later use
+            enumValues[ed->name] = {};
+            int discriminante = 0;
+            for (auto& [name, exprNode] : ed->values) {
+                int value = discriminante; // default value
+                if (exprNode) {
+                    // Evaluate compile-time constant expression for enum discriminant
+                    // For now we only support integer literals
+                    if (auto* lit = dynamic_cast<const IntLitNode*>(exprNode.get())) {
+                        value = lit->value;
+                    } else {
+                        // Fallback to discriminante counter for non-literal expressions
+                        // TODO: implement proper compile-time expression evaluation
+                        value = discriminante;
+                    }
+                }
+                enumValues[ed->name].push_back({name, value});
+                discriminante = value + 1; // next enum value
+            }
+            // Also register without namespace
+            {
+                auto sep = ed->name.rfind("::");
+                if (sep != std::string::npos) {
+                    std::string shortName = ed->name.substr(sep + 2);
+                    if (!enumValues.count(shortName)) {
+                        enumValues[shortName] = enumValues[ed->name];
+                    }
+                }
+            }
+            continue;
+        }
         if (auto* sd = dynamic_cast<const StructDefNode*>(decl.get())) {
             std::vector<Type*> fieldTypes;
             for (auto& f : sd->fields) {

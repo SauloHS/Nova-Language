@@ -96,6 +96,7 @@ static TokenType identifyKeyword(const std::string& word) {
     if (word == "asm")       return TOKEN_ASM;
     if (word == "ir")        return TOKEN_IR;
     if (word == "as")        return TOKEN_AS;
+    if (word == "enum")      return TOKEN_ENUM;
 
     // ── Literais booleanos ────────────────────────────────────────────────────
     if (word == "true")      return TOKEN_TRUE;

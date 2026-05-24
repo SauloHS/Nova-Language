@@ -1,14 +1,23 @@
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <thread>
-#include <chrono>
 #include <vector>
 
 #include "include/plugin.h"
+
+static void logMsg(const std::string& msg) {
+  std::ofstream f("/tmp/nova_plugin.log", std::ios::app);
+  if (f) f << msg << "\n";
+}
 
 enum WaitState {
   WAIT_NONE,
@@ -25,7 +34,8 @@ static std::string g_repoPath;
 static std::string g_commitScope;
 static std::string g_releaseTag;
 static std::vector<int> g_issueNumbers;
-static bool g_diffOpen = false;
+static bool g_diffHighlightsOn = false;
+static bool g_diffLinesOpen = false;
 
 static std::string trim(const std::string& input) {
   size_t start = input.find_first_not_of(" \t\r\n");
@@ -53,7 +63,68 @@ static std::string dirnameOf(const std::string& path) {
   return path.substr(0, pos);
 }
 
-static std::string runCommand(const std::string& command, int* exitCode = nullptr) {
+// Writes buf->lines to a temp file and returns a unified diff against HEAD.
+// This captures unsaved changes — `git diff` on disk would miss them.
+// Returns the diff string (empty if no changes or on error).
+// On error, if exitCode != nullptr it is set to non-zero.
+static std::string diffFromBuffer(NovaBuffer* buf, const std::string& repo,
+                                  int* exitCode = nullptr) {
+  if (!buf || !buf->filename || !buf->filename[0]) {
+    if (exitCode) *exitCode = -1;
+    return "";
+  }
+
+  // Write buffer to a temp file
+  char tmpPath[] = "/tmp/nova_diff_XXXXXX";
+  int fd = mkstemp(tmpPath);
+  if (fd < 0) {
+    if (exitCode) *exitCode = -1;
+    return "";
+  }
+  for (int i = 0; i < buf->lineCount; i++) {
+    if (buf->lines[i]) {
+      write(fd, buf->lines[i], strlen(buf->lines[i]));
+    }
+    write(fd, "\n", 1);
+  }
+  close(fd);
+
+  // Relative path of the file inside the repo (for git show HEAD:<path>)
+  std::string relPath = buf->filename;
+  if (relPath.rfind(repo, 0) == 0 && relPath.size() > repo.size())
+    relPath = relPath.substr(repo.size() + 1);  // strip leading "repo/"
+
+  // diff: compare HEAD version with the temp file
+  // --label makes the output look like a normal git diff
+  std::string cmd =
+      "git -C " + shellQuote(repo) + " show HEAD:" + shellQuote(relPath) +
+      " 2>/dev/null | diff -u --label a/" + shellQuote(relPath) +
+      " --label b/" + shellQuote(relPath) + " - " + shellQuote(tmpPath);
+
+  int rc = 0;
+  std::string result;
+  FILE* pipe = popen(cmd.c_str(), "r");
+  if (!pipe) {
+    unlink(tmpPath);
+    if (exitCode) *exitCode = -1;
+    return "";
+  }
+  char buffer[512];
+  while (fgets(buffer, sizeof(buffer), pipe)) result += buffer;
+  rc = pclose(pipe);
+  unlink(tmpPath);
+
+  // diff exits 1 when there are differences (normal), 2 on error.
+  // pclose() returns the raw waitpid status — use WEXITSTATUS to get the
+  // actual exit code.
+  int exitStatus = WIFEXITED(rc) ? WEXITSTATUS(rc) : 2;
+  if (exitCode)
+    *exitCode = (exitStatus == 0 || exitStatus == 1) ? 0 : exitStatus;
+  return result;
+}
+
+static std::string runCommand(const std::string& command,
+                              int* exitCode = nullptr) {
   std::string output;
   FILE* pipe = popen((command + " 2>&1").c_str(), "r");
   if (!pipe) {
@@ -78,8 +149,8 @@ static std::string detectRepo(NovaBuffer* buf) {
   std::string base = ".";
   if (buf && buf->filename && buf->filename[0]) base = dirnameOf(buf->filename);
   int rc = 0;
-  std::string repo =
-      trim(runCommand("git -C " + shellQuote(base) + " rev-parse --show-toplevel", &rc));
+  std::string repo = trim(runCommand(
+      "git -C " + shellQuote(base) + " rev-parse --show-toplevel", &rc));
   if (rc == 0 && !repo.empty()) return repo;
   return base;
 }
@@ -124,12 +195,21 @@ static NovaAction makeCloseSplit() {
   return action;
 }
 
+static std::string g_inputTitle;
+static std::string g_inputPlaceholder;
+static std::string g_inputDefault;
+
 static NovaAction makeInput(const std::string& title,
-                            const std::string& defaultValue = "") {
-  NovaInputDialog* input =
-      (NovaInputDialog*)calloc(1, sizeof(NovaInputDialog));
-  input->title = strdup(title.c_str());
-  input->defaultValue = strdup(defaultValue.c_str());
+                            const std::string& defaultValue = "",
+                            const std::string& placeholder = "") {
+  g_inputTitle = title;
+  g_inputPlaceholder = placeholder;
+  g_inputDefault = defaultValue;
+
+  NovaInputDialog* input = (NovaInputDialog*)calloc(1, sizeof(NovaInputDialog));
+  input->title = g_inputTitle.c_str();
+  input->placeholder = g_inputPlaceholder.c_str();
+  input->defaultValue = g_inputDefault.c_str();
   input->width = 64;
   input->row = -1;
   input->col = -1;
@@ -190,7 +270,7 @@ static NovaAction makeSplit(const std::string& title,
   split->lines = (const char**)calloc(lines.size(), sizeof(char*));
   split->lineStyles = (NovaStyle*)calloc(lines.size(), sizeof(NovaStyle));
   split->position = NOVA_SPLIT_RIGHT;
-  split->size = 48; // Changed from 72 to 48 for a smaller split view
+  split->size = 72;
   split->borderStyle = {NOVA_COLOR_BLUE, NOVA_COLOR_NONE, 1, 0};
   split->modal = modal ? 1 : 0;
 
@@ -219,12 +299,11 @@ static std::vector<std::string> buildDiffLines(NovaBuffer* buf) {
   std::vector<std::string> lines;
 
   int statusRc = 0;
-  std::string branch =
-      trim(runCommand("git -C " + shellQuote(repo) + " branch --show-current", &statusRc));
-  std::string status =
-      trim(runCommand("git -C " + shellQuote(repo) + " status --short " +
-                          shellQuote(file),
-                      nullptr));
+  std::string branch = trim(runCommand(
+      "git -C " + shellQuote(repo) + " branch --show-current", &statusRc));
+  std::string status = trim(runCommand(
+      "git -C " + shellQuote(repo) + " status --short " + shellQuote(file),
+      nullptr));
 
   lines.push_back("Repo: " + repo);
   lines.push_back("Branch: " + (branch.empty() ? "(detached)" : branch));
@@ -234,8 +313,7 @@ static std::vector<std::string> buildDiffLines(NovaBuffer* buf) {
   lines.push_back("");
 
   int rc = 0;
-  std::string diff =
-      runCommand("git -C " + shellQuote(repo) + " diff -- " + shellQuote(file), &rc);
+  std::string diff = diffFromBuffer(buf, repo, &rc);
   if (rc != 0) {
     lines.push_back("git diff failed:");
     for (auto& line : splitLines(diff)) lines.push_back(line);
@@ -249,107 +327,197 @@ static std::vector<std::string> buildDiffLines(NovaBuffer* buf) {
   return lines;
 }
 
-static NovaResponse showDiff(NovaBuffer* buf) {
-  return singleAction(makeSplit("Git Diff", buildDiffLines(buf), false));
-}
-
-// Helper para criar uma resposta com múltiplas ações
-static NovaResponse createMultiActionResponse(const std::vector<NovaAction>& actions) {
-    NovaResponse resp = {nullptr, 0};
-    resp.actionCount = (int)actions.size();
-    resp.actions = (NovaAction*)calloc(actions.size(), sizeof(NovaAction));
-    for (size_t i = 0; i < actions.size(); ++i) {
-        resp.actions[i] = actions[i];
-    }
-    return resp;
-}
-
-// Helper para gerar destaques a partir da saída do git diff para visualização inline
-static NovaResponse highlightDiffs(NovaBuffer* buf) {
+// ── Inline diff highlights
+// ──────────────────────────────────────────────────── Parses `git diff`
+// unified output and maps +/- lines back to buffer row positions so the editor
+// highlights them in-place.
+//
+// Strategy:
+//   - @@ -old,n +new,m @@ tells us the starting buffer row for new content.
+//   - '+' lines   → bright green  (added/modified in working tree)
+//   - '-' lines   → bright red    (removed since last commit; shown at the
+//                                  nearest surrounding context row)
+//   - context lines advance the new-side counter without generating highlights.
+static std::vector<NovaHighlight> buildInlineHighlights(NovaBuffer* buf) {
   std::string repo = detectRepo(buf);
   std::string file = currentFile(buf);
   std::vector<NovaHighlight> highlights;
 
-  // Primeiro, limpa os destaques existentes
-  NovaAction clearAction = {};
-  clearAction.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
-  
-  // Se o arquivo estiver vazio ou não estiver em um repositório, apenas limpa os destaques e mostra o status
-  if (file.empty()) {
-    NovaAction statusAction = makeStatus("No file to diff for highlights.");
-    return createMultiActionResponse({clearAction, statusAction});
-  }
-
-  // Obtém a saída do diff com contexto unificado 0 para facilitar a análise
   int rc = 0;
-  std::string diffOutput =
-      runCommand("git -C " + shellQuote(repo) + " diff -U0 -- " + shellQuote(file), &rc);
+  std::string diff = diffFromBuffer(buf, repo, &rc);
+  if (rc != 0 || trim(diff).empty()) return highlights;
 
-  if (rc != 0) {
-    NovaAction statusAction = makeStatus("Git diff failed for highlights: " + trim(diffOutput));
-    return createMultiActionResponse({clearAction, statusAction});
-  }
+  int newRow = 0;   // 0-based row in the current buffer
+  int lastRow = 0;  // last valid row we've seen (for anchoring '-' lines)
 
-  std::stringstream ss(diffOutput);
-  std::string line;
-  int currentBufferLine = -1; // Linha 0-indexada no buffer real do editor
-
-  while (std::getline(ss, line)) {
+  for (auto& line : splitLines(diff)) {
+    // Hunk header: @@ -old,n +new,m @@
     if (line.rfind("@@", 0) == 0) {
-      // Analisa o cabeçalho do hunk: @@ -old_start,old_count +new_start,new_count @@
-      size_t plus_pos = line.find('+');
-      size_t comma_pos = line.find(',', plus_pos);
-      if (plus_pos != std::string::npos) {
-        std::string new_start_str = line.substr(plus_pos + 1, comma_pos - (plus_pos + 1));
-        currentBufferLine = std::stoi(new_start_str) - 1; // Converte para 0-indexado
+      // Parse the +new line number
+      size_t plus = line.find('+');
+      if (plus != std::string::npos) {
+        int startLine = std::atoi(line.c_str() + plus + 1);
+        if (startLine > 0) newRow = startLine - 1;  // convert to 0-based
       }
-    } else if (currentBufferLine != -1) {
-      if (line.rfind("+", 0) == 0 && line.rfind("+++", 0) != 0) {
-        // Esta é uma linha adicionada no buffer atual
-        if (currentBufferLine >= 0 && currentBufferLine < buf->lineCount) {
-          NovaHighlight h = {};
-          h.row = currentBufferLine;
-          h.colStart = 0;
-          h.colEnd = (int)buf->lines[currentBufferLine].size(); // Destaca a linha inteira
-          h.style = {NOVA_COLOR_BRIGHT_GREEN, NOVA_COLOR_NONE, 1, 0}; // Verde para adições
-          highlights.push_back(h);
-        }
-        currentBufferLine++; // Move para a próxima linha no buffer
-      } else if (line.rfind("-", 0) == 0 && line.rfind("---", 0) != 0) {
-        // Esta é uma linha excluída da versão anterior, não pode ser destacada no buffer atual
-        // Não incrementa currentBufferLine, pois esta linha não está no buffer atual.
-      } else if (line.rfind(" ", 0) == 0) {
-        // Linha de contexto, existe em ambos. Apenas incrementa o contador de linhas.
-        currentBufferLine++;
+      // Highlight the hunk header row as cyan
+      if (lastRow < buf->lineCount) {
+        NovaHighlight h = {};
+        h.row = lastRow;
+        h.colStart = 0;
+        h.colEnd = buf->lines[lastRow] ? (int)strlen(buf->lines[lastRow]) : 1;
+        h.style = {NOVA_COLOR_BRIGHT_CYAN, NOVA_COLOR_NONE, 1, 0};
+        highlights.push_back(h);
       }
-      // Outras linhas de diff (diff --git, index, ---, +++) são ignoradas para destaques
+      continue;
+    }
+
+    // Skip file header lines
+    if (line.rfind("diff ", 0) == 0 || line.rfind("index ", 0) == 0 ||
+        line.rfind("--- ", 0) == 0 || line.rfind("+++ ", 0) == 0)
+      continue;
+
+    if (line.rfind("+", 0) == 0) {
+      // Added line — highlight the buffer row
+      if (newRow < buf->lineCount) {
+        NovaHighlight h = {};
+        h.row = newRow;
+        h.colStart = 0;
+        h.colEnd = buf->lines[newRow] ? (int)strlen(buf->lines[newRow]) : 1;
+        h.style = {NOVA_COLOR_BRIGHT_GREEN, NOVA_COLOR_NONE, 1, 0};
+        highlights.push_back(h);
+        lastRow = newRow;
+      }
+      newRow++;
+    } else if (line.rfind("-", 0) == 0) {
+      // Removed line — anchor to surrounding context row
+      int anchor = std::min(lastRow, buf->lineCount - 1);
+      if (anchor >= 0) {
+        NovaHighlight h = {};
+        h.row = anchor;
+        h.colStart = 0;
+        h.colEnd = buf->lines[anchor] ? (int)strlen(buf->lines[anchor]) : 1;
+        h.style = {NOVA_COLOR_BRIGHT_RED, NOVA_COLOR_NONE, 1, 0};
+        // Only push if not already marked green (added wins over removed)
+        bool alreadyGreen = false;
+        for (auto& existing : highlights)
+          if (existing.row == anchor &&
+              existing.style.fg == NOVA_COLOR_BRIGHT_GREEN)
+            alreadyGreen = true;
+        if (!alreadyGreen) highlights.push_back(h);
+      }
+      // '-' lines don't advance the new-side counter
+    } else {
+      // Context line — advance new-side counter
+      lastRow = newRow;
+      newRow++;
     }
   }
 
-  NovaAction addHighlightsAction = {};
-  addHighlightsAction.type = NOVA_ACTION_ADD_HIGHLIGHT;
-  addHighlightsAction.highlights = (NovaHighlight*)calloc(highlights.size(), sizeof(NovaHighlight));
-  addHighlightsAction.highlightCount = (int)highlights.size();
-  for (size_t k = 0; k < highlights.size(); k++) {
-      addHighlightsAction.highlights[k] = highlights[k];
-  }
-
-  NovaResponse resp = {};
-  if (highlights.empty()) {
-      NovaAction statusAction = makeStatus("No diffs for current file.");
-      resp.actions = (NovaAction*)calloc(2, sizeof(NovaAction));
-      resp.actionCount = 2;
-      resp.actions[0] = clearAction;
-      resp.actions[1] = statusAction;
-  } else {
-      resp.actions = (NovaAction*)calloc(2, sizeof(NovaAction));
-      resp.actionCount = 2;
-      resp.actions[0] = clearAction;
-      resp.actions[1] = addHighlightsAction;
-  }
-  return resp;
+  return highlights;
 }
 
+static NovaAction makeHighlights(const std::vector<NovaHighlight>& hl) {
+  NovaAction action = {};
+  if (hl.empty()) {
+    action.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+    return action;
+  }
+  action.type = NOVA_ACTION_ADD_HIGHLIGHT;
+  action.highlightCount = (int)hl.size();
+  action.highlights = (NovaHighlight*)malloc(hl.size() * sizeof(NovaHighlight));
+  for (size_t i = 0; i < hl.size(); i++) action.highlights[i] = hl[i];
+  return action;
+}
+
+// ── showDiffLines context
+// ───────────────────────────────────────────────────── Finds the diff hunk
+// closest to the cursor and shows what those lines looked like before (the '-'
+// side) in a non-modal split on the right.
+static std::vector<std::string> buildDiffLinesContext(NovaBuffer* buf) {
+  std::string repo = detectRepo(buf);
+  std::string file = currentFile(buf);
+  std::vector<std::string> result;
+
+  int rc = 0;
+  std::string diff = diffFromBuffer(buf, repo, &rc);
+  if (rc != 0) {
+    result.push_back("git diff failed.");
+    return result;
+  }
+  if (trim(diff).empty()) {
+    result.push_back("No changes since last commit.");
+    return result;
+  }
+
+  // Collect hunks: {newStartRow, vector of lines in that hunk}
+  struct Hunk {
+    int newStartRow;
+    std::vector<std::string> lines;
+  };
+  std::vector<Hunk> hunks;
+
+  int currentNewRow = 0;
+  Hunk* current = nullptr;
+
+  for (auto& line : splitLines(diff)) {
+    if (line.rfind("@@", 0) == 0) {
+      hunks.push_back({0, {}});
+      current = &hunks.back();
+      size_t plus = line.find('+');
+      if (plus != std::string::npos) {
+        int startLine = std::atoi(line.c_str() + plus + 1);
+        currentNewRow = (startLine > 0) ? startLine - 1 : 0;
+      }
+      current->newStartRow = currentNewRow;
+      current->lines.push_back(line);
+      continue;
+    }
+    if (!current) continue;
+    if (line.rfind("diff ", 0) == 0 || line.rfind("index ", 0) == 0 ||
+        line.rfind("--- ", 0) == 0 || line.rfind("+++ ", 0) == 0)
+      continue;
+
+    current->lines.push_back(line);
+    if (line.rfind("+", 0) == 0)
+      currentNewRow++;
+    else if (line.rfind("-", 0) != 0)
+      currentNewRow++;  // context
+  }
+
+  if (hunks.empty()) {
+    result.push_back("No hunks found.");
+    return result;
+  }
+
+  // Find hunk whose newStartRow is closest to the cursor
+  int cursorRow = buf ? buf->curRow : 0;
+  int bestIdx = 0;
+  int bestDist = std::abs(hunks[0].newStartRow - cursorRow);
+  for (int i = 1; i < (int)hunks.size(); i++) {
+    int dist = std::abs(hunks[i].newStartRow - cursorRow);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+
+  const Hunk& best = hunks[bestIdx];
+  result.push_back("Nearest changed region (line ~" +
+                   std::to_string(best.newStartRow + 1) + "):");
+  result.push_back("");
+
+  // Show only the '-' (before) lines plus context, skip '+' lines
+  for (auto& line : best.lines) {
+    if (line.rfind("+", 0) == 0 && line.rfind("+++", 0) != 0) continue;
+    result.push_back(line);
+  }
+
+  return result;
+}
+
+static NovaResponse showDiff(NovaBuffer* buf) {
+  return singleAction(makeSplit("Git Diff", buildDiffLines(buf), false));
+}
 
 static NovaResponse connectGithub() {
   int rc = 0;
@@ -380,8 +548,8 @@ static NovaResponse configureRepo(NovaBuffer* buf) {
 
 static NovaResponse startCommit() {
   g_waitState = WAIT_COMMIT_SCOPE;
-  return singleAction(makePopup("Commit Scope",
-                                {"Current file", "All repo changes", "Cancel"}));
+  return singleAction(makePopup(
+      "Commit Scope", {"Current file", "All repo changes", "Cancel"}));
 }
 
 static NovaResponse startRelease() {
@@ -392,13 +560,13 @@ static NovaResponse startRelease() {
 static NovaResponse listIssues(NovaBuffer* buf) {
   std::string repo = detectRepo(buf);
   int rc = 0;
-  std::string output =
-      runCommand(inRepoCommand(
-                     repo,
-                     "gh issue list --limit 30 --json number,title --jq "
-                     "'.[] | \"\\(.number)\\t\\(.title)\"'"),
-                 &rc);
-  if (rc != 0) return singleAction(makeStatus("gh issue list failed: " + trim(output)));
+  std::string output = runCommand(
+      inRepoCommand(repo,
+                    "gh issue list --limit 30 --json number,title --jq "
+                    "'.[] | \"\\(.number)\\t\\(.title)\"'"),
+      &rc);
+  if (rc != 0)
+    return singleAction(makeStatus("gh issue list failed: " + trim(output)));
 
   g_issueNumbers.clear();
   std::vector<std::string> items;
@@ -419,15 +587,15 @@ static NovaResponse listIssues(NovaBuffer* buf) {
 static NovaResponse viewIssue(NovaBuffer* buf, int issueNumber) {
   std::string repo = detectRepo(buf);
   int rc = 0;
-  std::string output =
-      runCommand(inRepoCommand(
-                     repo,
-                     "gh issue view " + std::to_string(issueNumber) +
-                         " --json number,title,state,author,body,url --jq "
-                         "'\"#\\(.number) \\(.title)\\nState: \\(.state)\\nAuthor: "
-                         "\\(.author.login)\\nURL: \\(.url)\\n\\n\\(.body)\"'"),
-                 &rc);
-  if (rc != 0) return singleAction(makeStatus("gh issue view failed: " + trim(output)));
+  std::string output = runCommand(
+      inRepoCommand(
+          repo, "gh issue view " + std::to_string(issueNumber) +
+                    " --json number,title,state,author,body,url --jq "
+                    "'\"#\\(.number) \\(.title)\\nState: \\(.state)\\nAuthor: "
+                    "\\(.author.login)\\nURL: \\(.url)\\n\\n\\(.body)\"'"),
+      &rc);
+  if (rc != 0)
+    return singleAction(makeStatus("gh issue view failed: " + trim(output)));
   return singleAction(makeSplit("Issue #" + std::to_string(issueNumber),
                                 splitLines(output), false));
 }
@@ -435,36 +603,52 @@ static NovaResponse viewIssue(NovaBuffer* buf, int issueNumber) {
 static NovaResponse runCommit(NovaBuffer* buf, const std::string& message) {
   std::string repo = detectRepo(buf);
   std::string file = currentFile(buf);
+  logMsg("runCommit: repo=" + repo + " file=" + file +
+         " scope=" + g_commitScope + " msg=" + message);
+
   std::string addCommand = "git -C " + shellQuote(repo) + " add ";
   addCommand += (g_commitScope == "all") ? "-A" : "-- " + shellQuote(file);
+  logMsg("runCommit: add cmd=" + addCommand);
 
   int addRc = 0;
   std::string addOutput = runCommand(addCommand, &addRc);
-  if (addRc != 0) return singleAction(makeStatus("git add failed: " + trim(addOutput)));
+  logMsg("runCommit: add rc=" + std::to_string(addRc) +
+         " out=" + trim(addOutput));
+  if (addRc != 0)
+    return singleAction(makeStatus("git add failed: " + trim(addOutput)));
 
   int commitRc = 0;
-  std::string commitOutput =
-      runCommand("git -C " + shellQuote(repo) + " commit -m " + shellQuote(message),
-                 &commitRc);
+  std::string commitOutput = runCommand(
+      "git -C " + shellQuote(repo) + " commit -m " + shellQuote(message),
+      &commitRc);
+  logMsg("runCommit: commit rc=" + std::to_string(commitRc) +
+         " out=" + trim(commitOutput));
   if (commitRc != 0)
     return singleAction(makeStatus("git commit failed: " + trim(commitOutput)));
 
-  return singleAction(makeStatus("Commit created: " + message));
+  int pushRc = 0;
+  std::string pushOutput =
+      runCommand("git -C " + shellQuote(repo) + " push 2>&1", &pushRc);
+  logMsg("runCommit: push rc=" + std::to_string(pushRc) +
+         " out=" + trim(pushOutput));
+  if (pushRc != 0)
+    return singleAction(makeStatus("Push failed: " + trim(pushOutput)));
+
+  return singleAction(makeStatus("Pushed: " + trim(pushOutput)));
 }
 
 static NovaResponse runRelease(NovaBuffer* buf) {
   std::string repo = detectRepo(buf);
   int rc = 0;
-  std::string output =
-      runCommand(inRepoCommand(repo,
-                               "git tag " + shellQuote(g_releaseTag) +
-                                   " 2>/dev/null || true; git push origin " +
-                                   shellQuote(g_releaseTag) +
-                                   "; gh release create " +
-                                   shellQuote(g_releaseTag) +
-                                   " --generate-notes"),
-                 &rc);
-  if (rc != 0) return singleAction(makeStatus("release failed: " + trim(output)));
+  std::string output = runCommand(
+      inRepoCommand(repo, "git tag " + shellQuote(g_releaseTag) +
+                              " 2>/dev/null || true; git push origin " +
+                              shellQuote(g_releaseTag) +
+                              "; gh release create " +
+                              shellQuote(g_releaseTag) + " --generate-notes"),
+      &rc);
+  if (rc != 0)
+    return singleAction(makeStatus("release failed: " + trim(output)));
   return singleAction(makeStatus("Release created: " + g_releaseTag));
 }
 
@@ -473,7 +657,7 @@ extern "C" {
 const char* plugin_info() { return "github_workflow|1.0|nova"; }
 
 const char* plugin_commands() {
-  return "gh-connect,repo,diff,commit,release,issues,diffs";
+  return "gh-connect,repo,diff,showDiffLines,commit,release,issues";
 }
 
 NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
@@ -481,27 +665,62 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
   if (!event) return empty;
 
   if (event->type == NOVA_EVENT_TICK) {
-    if (!g_diffOpen) return empty;
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-    
-    // When refreshing diff, also clear any existing highlights (from :diffs)
-    NovaAction clearHighlights = {};
-    clearHighlights.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
-    NovaAction showSplit = makeSplit("Git Diff", buildDiffLines(buf), false);
+    // Não fazer nada enquanto aguarda input/popup/confirm do usuário —
+    // o latest-wins policy descartaria o UI_RESULT se o TICK emitir ao mesmo
+    // tempo.
+    if (g_waitState != WAIT_NONE) return empty;
 
-    return createMultiActionResponse({clearHighlights, showSplit});
+    // Refresh diff highlights
+    if (g_diffHighlightsOn) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+      NovaResponse resp = {};
+      resp.actions = (NovaAction*)calloc(2, sizeof(NovaAction));
+      resp.actionCount = 2;
+      resp.actions[0].type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+      resp.actions[1] = makeHighlights(buildInlineHighlights(buf));
+      return resp;
+    }
+    // Refresh showDiffLines split
+    if (g_diffLinesOpen) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(300));
+      auto lines = buildDiffLinesContext(buf);
+      NovaSplit* split = (NovaSplit*)calloc(1, sizeof(NovaSplit));
+      split->title = strdup("Before (nearest change)");
+      split->titleStyle = {NOVA_COLOR_BRIGHT_CYAN, NOVA_COLOR_NONE, 1, 0};
+      split->lineCount = (int)lines.size();
+      split->lines = (const char**)calloc(lines.size(), sizeof(char*));
+      split->lineStyles = (NovaStyle*)calloc(lines.size(), sizeof(NovaStyle));
+      split->position = NOVA_SPLIT_RIGHT;
+      split->size = 60;
+      split->borderStyle = {NOVA_COLOR_BLUE, NOVA_COLOR_NONE, 1, 0};
+      split->modal = 0;
+      for (size_t i = 0; i < lines.size(); i++) {
+        split->lines[i] = strdup(lines[i].c_str());
+        split->lineStyles[i] = styleForDiffLine(lines[i]);
+      }
+      NovaAction action = {};
+      action.type = NOVA_ACTION_SHOW_SPLIT;
+      action.split = split;
+      return singleAction(action);
+    }
+    return empty;
   }
 
   if (event->type == NOVA_EVENT_UI_RESULT) {
+    logMsg(
+        "UI_RESULT: type=" + std::to_string(event->uiResultType) +
+        " waitState=" + std::to_string(g_waitState) +
+        " idx=" + std::to_string(event->uiSelectedIndex) + " text=" +
+        std::string(event->uiSelectedText ? event->uiSelectedText : "(null)"));
     if ((event->uiResultType == NOVA_UI_POPUP_CANCEL ||
          event->uiResultType == NOVA_UI_INPUT_CANCEL) &&
         g_waitState == WAIT_NONE) {
-      if (g_diffOpen) {
-          g_diffOpen = false;
-          NovaAction clearHighlights = {};
-          clearHighlights.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
-          // Retorna uma ação para fechar o split e uma para limpar os destaques
-          return createMultiActionResponse({singleAction(makeCloseSplit()).actions[0], clearHighlights});
+      g_diffLinesOpen = false;
+      if (g_diffHighlightsOn) {
+        g_diffHighlightsOn = false;
+        NovaAction a = {};
+        a.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+        return singleAction(a);
       }
       return empty;
     }
@@ -509,7 +728,6 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
     if (event->uiResultType == NOVA_UI_POPUP_CANCEL ||
         event->uiResultType == NOVA_UI_INPUT_CANCEL) {
       g_waitState = WAIT_NONE;
-      g_diffOpen = false;
       return singleAction(makeStatus("Cancelled."));
     }
 
@@ -522,21 +740,30 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
 
     if (g_waitState == WAIT_COMMIT_SCOPE &&
         event->uiResultType == NOVA_UI_POPUP_SELECT) {
+      logMsg("COMMIT_SCOPE: index=" + std::to_string(event->uiSelectedIndex));
       if (event->uiSelectedIndex == 2) {
         g_waitState = WAIT_NONE;
         return singleAction(makeStatus("Commit cancelled."));
       }
       g_commitScope = (event->uiSelectedIndex == 1) ? "all" : "file";
       g_waitState = WAIT_COMMIT_MSG;
+      logMsg("COMMIT_SCOPE: scope=" + g_commitScope + ", showing input");
       return singleAction(makeInput("Commit message"));
     }
 
-    if (g_waitState == WAIT_COMMIT_MSG &&
-        event->uiResultType == NOVA_UI_INPUT_CONFIRM && event->uiSelectedText) {
-      std::string message = trim(event->uiSelectedText);
-      g_waitState = WAIT_NONE;
-      if (message.empty()) return singleAction(makeStatus("Empty commit message."));
-      return runCommit(buf, message);
+    if (g_waitState == WAIT_COMMIT_MSG) {
+      logMsg("COMMIT_MSG: uiResultType=" + std::to_string(event->uiResultType) +
+             " text=" +
+             std::string(event->uiSelectedText ? event->uiSelectedText
+                                               : "(null)"));
+      if (event->uiResultType == NOVA_UI_INPUT_CONFIRM &&
+          event->uiSelectedText) {
+        std::string message = trim(event->uiSelectedText);
+        g_waitState = WAIT_NONE;
+        if (message.empty())
+          return singleAction(makeStatus("Empty commit message."));
+        return runCommit(buf, message);
+      }
     }
 
     if (g_waitState == WAIT_RELEASE_TAG &&
@@ -567,56 +794,58 @@ NovaResponse plugin_on_event(NovaEvent* event, NovaBuffer* buf) {
     return empty;
   }
 
-// Helper to create a multi-action response
-static NovaResponse createMultiActionResponse(const std::vector<NovaAction>& actions) {
-    NovaResponse resp = {nullptr, 0};
-    resp.actionCount = (int)actions.size();
-    resp.actions = (NovaAction*)calloc(actions.size(), sizeof(NovaAction));
-    for (size_t i = 0; i < actions.size(); ++i) {
-        resp.actions[i] = actions[i];
-    }
-    return resp;
-}
-
   if (event->type != NOVA_EVENT_COMMAND || !event->command) return empty;
   std::string command = event->command;
 
   if (command == "gh-connect") return connectGithub();
   if (command == "repo") return configureRepo(buf);
+
   if (command == "diff") {
-    g_diffOpen = !g_diffOpen;
-    if (g_diffOpen) {
-      // Opening split view: clear existing highlights and show split
-      NovaAction clearHighlights = {};
-      clearHighlights.type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
-      NovaAction showSplit = makeSplit("Git Diff", buildDiffLines(buf), false);
-      
-      return createMultiActionResponse({clearHighlights, showSplit});
-    } else {
-      // Closing split view: just close it
-      return singleAction(makeCloseSplit());
+    g_diffHighlightsOn = !g_diffHighlightsOn;
+    if (!g_diffHighlightsOn) {
+      // Desligar: limpar highlights
+      NovaResponse resp = {};
+      resp.actions = (NovaAction*)calloc(1, sizeof(NovaAction));
+      resp.actionCount = 1;
+      resp.actions[0].type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+      return resp;
     }
+    // Ligar: aplicar highlights nas linhas modificadas
+    auto hlVec = buildInlineHighlights(buf);
+    NovaResponse resp = {};
+    resp.actions = (NovaAction*)calloc(2, sizeof(NovaAction));
+    resp.actionCount = 2;
+    resp.actions[0].type = NOVA_ACTION_CLEAR_HIGHLIGHTS;
+    resp.actions[1] = makeHighlights(hlVec);
+    return resp;
   }
-  if (command == "diffs") {
-    // If diff split is open, close it before showing highlights
-    if (g_diffOpen) {
-        g_diffOpen = false; // Set to false to prevent NOVA_EVENT_TICK from reopening
-        NovaAction closeSplit = makeCloseSplit();
-        NovaResponse highlightResp = highlightDiffs(buf); // This already clears highlights and adds new ones.
-        
-        // Combine closeSplit and highlightResp's actions
-        std::vector<NovaAction> combinedActions;
-        combinedActions.push_back(closeSplit);
-        for (int k = 0; k < highlightResp.actionCount; ++k) {
-            combinedActions.push_back(highlightResp.actions[k]);
-        }
-        // IMPORTANT: Free the original highlightResp.actions after copying
-        free(highlightResp.actions); 
-        return createMultiActionResponse(combinedActions);
+
+  if (command == "showDiffLines") {
+    g_diffLinesOpen = !g_diffLinesOpen;
+    if (!g_diffLinesOpen) return singleAction(makeCloseSplit());
+
+    auto lines = buildDiffLinesContext(buf);
+    NovaSplit* split = (NovaSplit*)calloc(1, sizeof(NovaSplit));
+    split->title = strdup("Before (nearest change)");
+    split->titleStyle = {NOVA_COLOR_BRIGHT_CYAN, NOVA_COLOR_NONE, 1, 0};
+    split->lineCount = (int)lines.size();
+    split->lines = (const char**)calloc(lines.size(), sizeof(char*));
+    split->lineStyles = (NovaStyle*)calloc(lines.size(), sizeof(NovaStyle));
+    split->position = NOVA_SPLIT_RIGHT;
+    split->size = 60;
+    split->borderStyle = {NOVA_COLOR_BLUE, NOVA_COLOR_NONE, 1, 0};
+    split->modal =
+        0;  // non-modal: continua editando enquanto o split está aberto
+    for (size_t i = 0; i < lines.size(); i++) {
+      split->lines[i] = strdup(lines[i].c_str());
+      split->lineStyles[i] = styleForDiffLine(lines[i]);
     }
-    // If split view not open, just highlight
-    return highlightDiffs(buf);
+    NovaAction action = {};
+    action.type = NOVA_ACTION_SHOW_SPLIT;
+    action.split = split;
+    return singleAction(action);
   }
+
   if (command == "commit") return startCommit();
   if (command == "release") return startRelease();
   if (command == "issues") return listIssues(buf);
@@ -639,14 +868,15 @@ void nova_free_response(NovaResponse* response) {
       free(action.popup);
     }
     if (action.input) {
-      if (action.input->title) free((void*)action.input->title);
-      if (action.input->defaultValue) free((void*)action.input->defaultValue);
+      // title/placeholder/defaultValue apontam para globals g_input*,
+      // não foram alocados com strdup — não liberar.
       free(action.input);
     }
     if (action.confirm) {
       if (action.confirm->title) free((void*)action.confirm->title);
       if (action.confirm->message) free((void*)action.confirm->message);
-      if (action.confirm->confirmLabel) free((void*)action.confirm->confirmLabel);
+      if (action.confirm->confirmLabel)
+        free((void*)action.confirm->confirmLabel);
       if (action.confirm->cancelLabel) free((void*)action.confirm->cancelLabel);
       free(action.confirm);
     }

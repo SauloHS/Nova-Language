@@ -610,6 +610,9 @@ struct BorrowChecker {
             recordUses(vd->init.get());
         } else if (auto* svd = dynamic_cast<const StructVarDeclNode*>(node)) {
             lastUseIndex[svd->varName] = globalIndex;
+        } else if (auto* evd = dynamic_cast<const EnumVarDeclNode*>(node)) {
+            lastUseIndex[evd->varName] = globalIndex;
+            // Enum variable declarations don't have initialization expressions to check
         } else if (auto* ad = dynamic_cast<const ArrayDeclNode*>(node)) {
             lastUseIndex[ad->name] = globalIndex;
         }

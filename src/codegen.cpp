@@ -222,8 +222,9 @@ static Type* llvmType(DataType t) {
         case DataType::Double:   return Type::getDoubleTy(ctx);
         case DataType::String:   return PointerType::getUnqual(ctx);
         case DataType::Char:     return Type::getInt8Ty(ctx);
+        case DataType::Bool:     return Type::getInt1Ty(ctx);   // ← ADICIONAR
         case DataType::Void:     return Type::getVoidTy(ctx);
-        case DataType::Custom:   return PointerType::getUnqual(ctx); // struct → ponteiro
+        case DataType::Custom:   return PointerType::getUnqual(ctx);
     }
     return Type::getInt32Ty(ctx);
 }
@@ -1941,6 +1942,20 @@ static Value* codegenExpr(const ASTNode* node) {
             emitWarning(sourceFile, n->line, n->col,
                 "cast from 'long' to 'int' may truncate value",
                 getSourceLine(n->line), 1);
+                // ── Gera a instrução de cast correta ─────────────────────────────
+            // bool (i1) → int/long/longlong: ZExt (0 ou 1)
+            if (srcType->isIntegerTy(1) && dstType->isIntegerTy() && !dstType->isIntegerTy(1))
+                return builder.CreateZExt(val, dstType, "cast");
+            // bool (i1) → float/double
+            if (srcType->isIntegerTy(1) && dstType->isFloatingPointTy())
+                return builder.CreateUIToFP(val, dstType, "cast");
+            // int/long → bool (i1): val != 0
+            if (srcType->isIntegerTy() && !srcType->isIntegerTy(1) && dstType->isIntegerTy(1))
+                return builder.CreateICmpNE(val, ConstantInt::get(srcType, 0), "cast");
+            // float/double → bool (i1): val != 0.0
+            if (srcType->isFloatingPointTy() && dstType->isIntegerTy(1))
+                return builder.CreateFCmpONE(val, ConstantFP::get(srcType, 0.0), "cast");
+
 
         // ── Gera a instrução de cast correta ─────────────────────────────
         // int/long/longlong → float/double

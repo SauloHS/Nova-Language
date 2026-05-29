@@ -62,7 +62,7 @@ run_test() {
 
     # Compara com arquivo de expectativa
     if [ -f "$expect_file" ]; then
-        if ! diff -u <(cat "$expect_file"; echo) <(cat "$output_file"; echo) >> "$RESULTS_FILE" 2>&1; then
+        if ! diff -u "$expect_file" "$output_file" >> "$RESULTS_FILE" 2>&1; then
             echo -e "${RED}FALHOU (output)${NC}" | tee -a "$RESULTS_FILE"
             echo "  Diff: $expect_file vs $output_file" >> "$RESULTS_FILE"
             return 1
@@ -109,8 +109,8 @@ echo "========================================"
     echo " Resumo dos Testes"
     echo "========================================"
     echo " Total:  $total"
-    echo " Passed: ${GREEN}$passed${NC}"
-    echo " Failed: ${RED}$failed${NC}"
+    echo -e " Passed: ${GREEN}$passed${NC}"
+    echo -e " Failed: ${RED}$failed${NC}"
     echo "========================================"
     
     # Detalhes dos testes que falharam
